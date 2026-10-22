@@ -7,16 +7,19 @@ Devices & networks / Program blocks view. Background and rationale are
 in `README.md` and `TagTable_IoTOutput.md` — this file is the ordered
 checklist only.
 
-## 1. Create `Q_RemoteOutput` (output tag, %Q3.0)
+## 1. Create `Q_RemoteOutput` (output tag, %Q0.3)
 
-Skip this step if the tag already exists from earlier work.
+Skip this step if the tag already exists from earlier work. `%Q0.3` is
+confirmed free in this project (`IOT-TEST`); use `%Q3.0` instead if
+loading alongside LAB4/LAB5 in the same project — see
+`TagTable_IoTOutput.md` for why.
 
 1. In the project tree, expand **PLC_1 → PLC tags** and open the
    default tag table.
 2. Add a new row:
    - **Name**: `Q_RemoteOutput`
    - **Data type**: `Bool`
-   - **Address**: `%Q3.0`
+   - **Address**: `%Q0.3`
 3. In the tag's properties (right side of the row, or the "Accessible
    from HMI/OPC UA/Web API" column), confirm the **Access** (visible)
    and **Writable** checkboxes are both checked. These are checked by
