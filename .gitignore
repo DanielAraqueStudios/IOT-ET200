@@ -8,3 +8,6 @@
 .claude-flow/
 .swarm/
 CLAUDE.md
+
+# Dependencies
+node_modules/
