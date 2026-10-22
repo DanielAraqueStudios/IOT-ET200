@@ -151,24 +151,27 @@ See `TIA_PORTAL_BUILD_GUIDE.md` for the full click-by-click version of
 the steps above, including the license check and NodeId-browsing
 verification checklist.
 
-## MQTT broker: reused from the Paint-mixer project, over TLS, no device token
+## MQTT broker: reused from the Paint-mixer project, TLS + device-token auth
 
 This doesn't stand up a separate broker — it connects to the custom
 embedded MQTT broker already running inside the `Paint-mixer` repo's
 FastAPI app (`api/broker.py` + `api/main.py`), deployed on Railway.
-**Auth model changed from the paint-mixer's own setup:** no
-email/device-token login — security is TLS only.
+**Auth model: TLS is added on top of the existing device-token auth,
+not a replacement for it.** The broker still runs
+`check_device_token(email, token)` on every CONNECT — this gateway
+sends its account email as the MQTT username and that account's
+device token (from Paint-mixer's `GET /api/auth/device-token`) as the
+MQTT password, same fields `check_device_token` already validates.
 
 **This requires a broker-side change that is NOT part of this repo —
 tracked separately in `Paint-mixer`:**
 - `api/broker.py` currently has **zero TLS support** — it's a raw
   `asyncio.start_server()` with no SSL context at all. It needs to be
   wrapped with an `ssl.SSLContext` (cert + key) before this gateway can
-  connect to it over `mqtts://`.
-- The `auth_callback = check_device_token` line in `api/main.py` should
-  be removed (or left unset) so the broker stops requiring
-  email/device-token credentials — TLS is the only security layer for
-  this connection now.
+  connect to it over `mqtts://`. (This part is done in that repo's
+  working tree, awaiting review/commit there.)
+- `api/main.py`'s `auth_callback = check_device_token` line **stays as
+  it is** — do not remove it. TLS and device-token auth run together.
 - Still listens on `MQTT_PORT` (env var, default `1884`) — a
   **different port from the HTTP API's `$PORT`**, needing its own
   Railway **TCP Proxy** to be reachable from here. If Railway's TCP
@@ -179,6 +182,17 @@ tracked separately in `Paint-mixer`:**
   `plant/small_scope/...` topics, distinct from the paint-mixer's
   `mixer/command`/`mixer/status`, so the two don't collide on the same
   broker.
+
+**Cert trust (self-signed, not CA-issued):** the broker's TLS
+certificate is self-signed and trusted manually — same posture as the
+OPC UA leg's `endpointMustExist: false` — so standard CA validation
+will always fail against it. Fetch that exact certificate once (e.g.
+`openssl s_client -connect <host>:<port> -showcerts`, save the server
+cert as PEM) and point `MQTT_TLS_CA_FILE` at it so `mqtt.js`'s `ca`
+option pins that specific cert as the trust anchor. Leaving
+`MQTT_TLS_CA_FILE` unset falls back to `rejectUnauthorized: false` (no
+cert validation at all, logged as a warning on startup) — acceptable
+for this lab/POC stage, not beyond it.
 
 ## Setup (on the SIMATIC IOT2050)
 
@@ -192,7 +206,13 @@ Edit `config.js`, or set these as environment variables instead:
 - `opcua.outputNodeId` — the NodeId of the output tag from TIA Portal.
 - `MQTT_URL` — `mqtts://<paint-mixer-app>.up.railway.app:<TCP-proxy-port>`
   (TLS — requires the broker-side TLS change noted above to actually
-  work; no username/password are sent).
+  work).
+- `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` — account email + device token,
+  sent as the MQTT CONNECT username/password (the broker still
+  requires `check_device_token` auth; TLS doesn't replace it).
+- `MQTT_TLS_CA_FILE` — path to the broker's self-signed cert PEM, so
+  the client trusts that specific cert. Unset falls back to
+  `rejectUnauthorized: false` (no validation), lab/POC only.
 - `mqtt.commandTopic` / `mqtt.stateTopic` — topic names to use.
 - `opcua.inputNodeId` / `opcua.inputPollMs` — the input tag's NodeId
   and poll interval.

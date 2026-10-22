@@ -1,6 +1,7 @@
 // Small scope: one MQTT command ("ON"/"OFF") writes one PLC output tag
 // over OPC UA. No telemetry, no other tags, no interlock — matches the
 // LAB4/small_scope pattern of this repo (minimal, single-purpose).
+const fs = require("fs");
 const mqtt = require("mqtt");
 const { OPCUAClient, DataType, StatusCodes } = require("node-opcua-client");
 const config = require("./config");
@@ -31,11 +32,29 @@ async function main() {
 
   // protocolVersion: 4 (3.1.1) — the Paint-mixer broker (api/broker.py)
   // only implements CONNECT/PUBLISH/SUBSCRIBE/PINGREQ/DISCONNECT for
-  // that version; no retained messages, no QoS 2. TLS only — no
-  // username/password, no device-token auth.
+  // that version; no retained messages, no QoS 2. TLS + device-token
+  // auth (defense in depth — the broker still runs check_device_token
+  // on top of TLS, not instead of it): username = account email,
+  // password = that account's device token.
+  const tlsOptions = config.mqtt.tlsCaFile
+    // Pin the broker's own self-signed cert as the trust anchor — it
+    // isn't CA-issued, so the public trust store will always reject it.
+    ? { ca: fs.readFileSync(config.mqtt.tlsCaFile) }
+    : (() => {
+        console.warn(
+          "[mqtt] MQTT_TLS_CA_FILE not set — falling back to " +
+            "rejectUnauthorized:false (no cert validation, insecure, " +
+            "lab/POC only). Set it to the broker's self-signed cert PEM " +
+            "to validate properly."
+        );
+        return { rejectUnauthorized: false };
+      })();
   const mqttClient = mqtt.connect(config.mqtt.url, {
     protocolVersion: 4,
     reconnectPeriod: 2000,
+    username: config.mqtt.username,
+    password: config.mqtt.deviceToken,
+    ...tlsOptions,
   });
 
   mqttClient.on("connect", () => {
