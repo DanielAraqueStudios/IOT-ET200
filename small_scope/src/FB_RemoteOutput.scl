@@ -1,0 +1,43 @@
+// FB_RemoteOutput — body only.
+// TIA's block editor already knows this is FUNCTION_BLOCK
+// "FB_RemoteOutput"; do NOT type FUNCTION_BLOCK, VAR/END_VAR, BEGIN,
+// or END_FUNCTION_BLOCK in the code pane.
+//
+// Why this FB exists instead of letting OPC UA write the physical
+// output directly: OPC UA write access to a plain %Q tag worked in
+// isolated testing (UaExpert) but proved unreliable once this project
+// was reloaded/power-cycled a few times — the server's address space
+// intermittently stopped exposing %Q tags even with the license and
+// "Accessible from HMI/OPC UA/Web API" both confirmed correct. Writing
+// to a Static interface variable instead, and letting the PLC's own
+// SCL logic move that value onto the physical output, is the more
+// robust pattern — it also means remote and local control are now
+// both explicit, separate inputs to real PLC logic instead of OPC UA
+// silently stomping a physical output behind the program's back.
+//
+// Why a Static interface variable (instance DB member) instead of a
+// plain global M tag: this keeps the remote-write target scoped to
+// this FB's own instance data. If this FB is ever reused for more than
+// one output (multiple calls, multiple instance DBs), each call gets
+// its own separate RemoteCmd_Output automatically — no need for a
+// pile of near-identical global M tags, one per output.
+//
+// Static variable needed (declare in the interface table, Static
+// section — NOT typed as VAR_TEMP/VAR text here):
+//   RemoteCmd_Output : Bool   // written by OPC UA (the IOT2050 gateway)
+//                              // Access/Writable must be checked on this
+//                              // interface member for OPC UA to reach it.
+//
+// Tag referenced (declare in the default tag table — see
+// TagTable_IoTOutput.md):
+//   Q_RemoteOutput : Bool   // physical output this scope controls
+//
+// Logic:
+// - Single unconditional assignment: the physical output always
+//   mirrors the remote command variable. No interlock with any
+//   physical pushbutton exists in this minimal scope (see "Judgment
+//   calls" in README.md) — if this output ever needs to coexist with
+//   local control, OR the two sources together here instead of a
+//   straight assignment.
+
+"Q_RemoteOutput" := #RemoteCmd_Output;
