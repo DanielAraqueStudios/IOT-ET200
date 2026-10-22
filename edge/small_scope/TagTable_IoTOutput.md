@@ -55,7 +55,7 @@ guessing.
    (Access) and Writable boxes — this is what actually exposes it to
    OPC UA. Call it once from `OB1` with a default instance, same
    pattern as every LAB4/LAB5 FB.
-3. Enable the OPC UA server on the CPU (see `../Arquitecture.md` and
+3. Enable the OPC UA server on the CPU (see `../../Arquitecture.md` and
    `README.md`'s step-by-step), and **check CPU Properties → Runtime
    licenses → OPC UA first** — this was the actual blocker in earlier
    testing.

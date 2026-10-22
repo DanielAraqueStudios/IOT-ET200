@@ -1,10 +1,15 @@
 # IOT small_scope — remote ON/OFF of one PLC output
 
+> **Edge half:** this folder runs only on the SIMATIC IOT2050, with
+> local plant-network access to the PLC's OPC UA server — it is never
+> deployed to Railway. See `../../cloud/dashboard/` for the
+> Railway-deployable half.
+
 Minimal scope: an MQTT command (`"ON"`/`"OFF"`) on a single topic turns
 one PLC output tag on or off, via OPC UA, running on the SIMATIC
 IOT2050 gateway. No telemetry, no other tags, no interlock — the
 smallest possible slice of the full architecture in
-`../Arquitecture.md`, same spirit as `LAB/LAB 4/small_scope`.
+`../../Arquitecture.md`, same spirit as `LAB/LAB 4/small_scope`.
 
 > **Status: PLC/OPC UA side confirmed working end-to-end.** Verified
 > with a real external OPC UA client (UaExpert) connecting to the
@@ -145,7 +150,7 @@ issue below never showed up on reads). In short:
    NodeId and copy it into `config.js`'s `opcua.inputNodeId`.
 6. Compile, download. Confirm the CPU has a static IP on the plant
    network the IOT2050 can reach (no internet-facing config needed on
-   the PLC — see `../Arquitecture.md`).
+   the PLC — see `../../Arquitecture.md`).
 
 See `TIA_PORTAL_BUILD_GUIDE.md` for the full click-by-click version of
 the steps above, including the license check and NodeId-browsing
