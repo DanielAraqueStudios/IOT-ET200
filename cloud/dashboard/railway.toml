@@ -1,0 +1,21 @@
+# Railway service definitions for this POC. Postgres is provisioned as a
+# separate Railway-managed Postgres plugin/service (not declared here) —
+# its DATABASE_URL gets wired into the backend service's env vars.
+#
+# This repo has no separate MQTT broker service — the backend connects
+# out to the existing Paint-mixer-hosted broker over mqtts://. If that
+# broker's MQTT_PORT needs its own Railway TCP Proxy to be reachable
+# from here, that's configured on the Paint-mixer project's service, not
+# this one — see cloud/dashboard/README.md and edge/small_scope/README.md
+# for the TCP Proxy caveat.
+
+[build]
+builder = "DOCKERFILE"
+
+[[services]]
+name = "dashboard-backend"
+dockerfilePath = "backend/Dockerfile"
+
+[[services]]
+name = "dashboard-frontend"
+dockerfilePath = "frontend/Dockerfile"

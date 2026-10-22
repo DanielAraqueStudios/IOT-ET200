@@ -1,8 +1,10 @@
 # PLC Cloud Dashboard
 
-Read-only cloud dashboard for the `IOT-ET200/small_scope` gateway. Shows
-current and historical input/output tag state. **No control/write-back
-UI, no HMI** — display only, by design.
+Read-only cloud dashboard for the `../../edge/small_scope` gateway.
+Shows current and historical input/output tag state. **No
+control/write-back UI, no HMI** — display only, by design. This is the
+**cloud half** of this repo — the only part ever deployed to Railway
+(see `../../edge/small_scope/README.md` for the half that isn't).
 
 ## Architecture
 
@@ -10,11 +12,12 @@ UI, no HMI** — display only, by design.
   updated_at`); every MQTT message is inserted as a new row, so the
   "current" value per tag is just its latest row.
 - `backend/` — FastAPI service. `mqtt_ingest.py` subscribes over MQTT
-  TLS (`mqtts://`, no username/password — matches the gateway's auth
+  TLS + device-token auth (`mqtts://`, matching the edge gateway's auth
   model) to `plant/small_scope/output/state` and
   `plant/small_scope/input/state`, and writes every message into
   `plc_state`. `main.py` exposes read-only REST endpoints
-  (`GET /api/state`, `GET /api/history/{tag_name}`).
+  (`GET /api/state`, `GET /api/history/{tag_name}`), protected by the
+  JWT auth in `auth.py`.
 - `frontend/` — minimal Angular app that polls `GET /api/state` and
   renders current tag values. No write endpoints exist anywhere in
   this repo.
@@ -29,6 +32,9 @@ psql plc -f db/schema.sql
 ```
 
 ### Backend
+
+See `backend/env.example` for the full list with comments (copy it to
+`.env` and fill it in, or export each var directly):
 
 ```bash
 cd backend
@@ -117,6 +123,37 @@ The Angular frontend stores the token in `sessionStorage` (cleared
 when the tab closes) rather than `localStorage`, since a 1-hour bearer
 token sitting in `localStorage` would otherwise persist indefinitely
 if a user never explicitly logs out.
+
+This is separate from the MQTT connection's auth: the broker requires
+TLS *and* `check_device_token` (username = account email, password =
+device token) — see the env vars above.
+
+## Deploying to Railway
+
+Two services, declared in `railway.toml` at this folder's root:
+
+- **`dashboard-backend`** — built from `backend/Dockerfile` (binds to
+  Railway's injected `$PORT`). Attach a Railway Postgres plugin to get
+  `DATABASE_URL` automatically; set the rest of `backend/env.example`'s
+  vars (renamed `.env.example` → service variables in the Railway
+  dashboard) manually.
+- **`dashboard-frontend`** — built from `frontend/Dockerfile`
+  (multi-stage: `ng build` then served via nginx on `$PORT`). Before
+  building, set `apiUrl` in `frontend/src/environment.ts` to the
+  backend service's public Railway domain.
+
+**MQTT broker reachability:** this backend only connects *out* to the
+existing Paint-mixer-hosted broker (`MQTT_URL`) — there's no broker
+service to deploy here. That broker's `MQTT_PORT` listens on a
+different port from its own HTTP API's `$PORT` and needs its own
+Railway **TCP Proxy** to be reachable at all (same caveat already
+documented in `../../edge/small_scope/README.md`'s "MQTT broker"
+section) — confirm that's configured on the Paint-mixer project before
+assuming `MQTT_URL` will connect.
+
+Both Dockerfiles are written for this POC stage — review resource
+limits/health checks before relying on this for anything beyond a
+demo.
 
 ## Not yet decided / needs confirmation
 
