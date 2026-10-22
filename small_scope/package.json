@@ -1,0 +1,14 @@
+{
+  "name": "iot2050-small-scope",
+  "version": "1.0.0",
+  "description": "Minimal OPC UA <-> MQTT bridge: one MQTT command turns one PLC output ON/OFF",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.1",
+    "node-opcua-client": "^2.130.0"
+  }
+}
