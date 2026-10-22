@@ -1,0 +1,10 @@
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+
+# Claude Code / Ruflo tooling — local only, never checked in
+.claude/
+.claude-flow/
+.swarm/
+CLAUDE.md
