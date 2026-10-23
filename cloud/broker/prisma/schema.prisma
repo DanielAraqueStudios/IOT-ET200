@@ -1,0 +1,24 @@
+// Prisma is used here ONLY for schema/migrations against the broker's
+// dedicated Postgres — NOT as the runtime client. The running service
+// stays Python/SQLAlchemy (see auth.py, models.py); this schema must be
+// kept in sync with models.py by hand. See README.md "Database
+// migrations" for why.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  deviceToken  String?
+  createdAt    DateTime @default(now())
+
+  @@map("User")
+}

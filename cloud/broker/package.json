@@ -1,0 +1,8 @@
+{
+  "name": "broker-migrations",
+  "private": true,
+  "description": "Prisma CLI only, for schema/migrations against the broker's Postgres. The service itself runs on Python — see requirements.txt.",
+  "devDependencies": {
+    "prisma": "5.20.0"
+  }
+}

@@ -44,13 +44,47 @@ client. Do not remove or weaken this check.
 
 `models.py` here only declares the columns of `User` that
 `check_device_token` reads (`id`, `email`, `passwordHash`,
-`deviceToken`, `createdAt`) — it must point at the same Postgres table
-that actually issues/stores device tokens. **Not yet wired up in this
-repo**: there is no user-registration/device-token-issuing endpoint
-here (the original one lived in Paint-mixer's own `auth.py`, which was
-intentionally left out since it's app-specific, not broker
-infrastructure). `DATABASE_URL` needs to point at whichever Postgres
-ends up owning that table — confirm before deploying for real traffic.
+`deviceToken`, `createdAt`).
+
+**Database: dedicated, not shared.** This service gets its own
+Postgres (a separate Railway Postgres plugin), not Paint-mixer's DB —
+it only ever needs this one trimmed table.
+
+**Known gap / TODO — device tokens are not populated yet.** There is
+no user-registration/device-token-issuing endpoint in this service
+(the original one lived in Paint-mixer's own `auth.py`, intentionally
+left out here since it's app-specific, not broker infrastructure). So
+right after this dedicated DB is created, its `User` table is empty —
+`check_device_token` will reject everything until rows exist. Until a
+real issuance flow is built somewhere, rows must be inserted manually
+(e.g. a one-off `INSERT INTO "User" (email, "passwordHash",
+"deviceToken") VALUES (...)` or a short script) for each client that
+needs to connect. This is flagged as a gap, not solved here — building
+token issuance is new scope beyond bringing the broker in and
+deploying it.
+
+## Database migrations
+
+Schema/migrations for this dedicated Postgres are managed with
+**Prisma** (`prisma/schema.prisma`), even though the running service
+is Python/FastAPI. Prisma is used **only as the migration tool here —
+not as the runtime client**: the actual `check_device_token` query at
+runtime still goes through SQLAlchemy (`models.py`, `auth.py`). This
+means `prisma/schema.prisma` and `models.py` describe the same table
+by hand and must be kept in sync manually when either changes.
+
+- `prisma/schema.prisma` — the `User` model, matching `models.py`.
+- `prisma/migrations/` — one folder per migration (the committed
+  `20261023024200_init` creates the `User` table). Add a new migration
+  with `npx prisma migrate dev --name <description>` against a local/
+  dev `DATABASE_URL` (requires Node + `npm install` once, see
+  `package.json`), then commit the generated `prisma/migrations/<ts>_<name>/migration.sql`.
+- **Deploy-time**: the `Dockerfile`'s `CMD` runs `npx prisma migrate
+  deploy` before starting `uvicorn`, applying any pending migrations
+  against `DATABASE_URL` on every deploy — this is Prisma's documented
+  pattern for non-interactive/production migrations (as opposed to
+  `prisma migrate dev`, which is dev-only and asks for confirmation).
+  The `Dockerfile` installs Node.js solely to run this CLI step.
 
 ## Running locally
 
@@ -84,13 +118,38 @@ Declared in `railway.toml` at this folder's root, built from
 
 Required env vars (see `env.example`):
 
-- `DATABASE_URL` — Postgres holding the `User.deviceToken` table (see
-  Auth model above — not yet decided which instance this should be).
+- `DATABASE_URL` — this service's own dedicated Postgres plugin
+  (see "Database: dedicated, not shared" above). Service-specific,
+  not a Railway Shared Variable.
 - `MQTT_PORT` — port the MQTT listener binds to internally.
 - `MQTT_TLS_CERT` / `MQTT_TLS_KEY` — self-signed cert + key for
   `mqtts://`. Once deployed, fetch this cert (or its fingerprint) so
   it can be pinned on the client side (`MQTT_TLS_CA_CERT` for the
   dashboard backend) — do not fabricate or assume a value.
+
+### Railway Shared Variables
+
+Anything this service and `cloud/dashboard` both need should be set
+once as a project-level **Shared Variable** in Railway rather than
+duplicated into each service's own env vars:
+
+- **The broker's public TLS certificate** — the broker loads it as
+  `MQTT_TLS_CERT` (cert half only; the private key `MQTT_TLS_KEY`
+  stays broker-only and must *not* be a shared variable), and the
+  dashboard backend trusts that exact same cert as
+  `MQTT_TLS_CA_CERT`. Same file/content, different variable name per
+  service — document that mapping wherever the shared variable is
+  defined, don't assume the names line up automatically.
+- **The broker's reachable address** (host + TCP Proxy port), once
+  known after deploy — consumed as `MQTT_URL` by the dashboard
+  backend.
+
+Per-service, NOT shared: each service's `DATABASE_URL` (separate,
+dedicated Postgres instances), `MQTT_TLS_KEY` (broker's private key),
+and any individual device token / `MQTT_USERNAME` /
+`MQTT_DEVICE_TOKEN` a specific client uses to authenticate — those are
+per-client credentials, not architecture-level config, and don't
+belong in a project-wide shared variable.
 
 This Dockerfile/service is written for POC stage — review resource
 limits/health checks before relying on this for anything beyond a demo.
