@@ -1,0 +1,14 @@
+# Railway service definition for the MQTT broker.
+#
+# This service needs a Railway TCP Proxy (not the HTTP $PORT) for
+# MQTT_PORT — TCP proxies aren't declarative in railway.toml; add one
+# from the Railway dashboard/CLI against this service once deployed
+# (Settings -> Networking -> TCP Proxy, target port = MQTT_PORT). See
+# README.md for the full explanation and the TLS/auth model.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
