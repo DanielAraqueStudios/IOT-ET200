@@ -3,6 +3,7 @@ import { CommonModule } from "@angular/common";
 import { environment } from "./environment";
 import { AuthService } from "./auth.service";
 import { LoginComponent } from "./login.component";
+import { AdminDeviceComponent } from "./admin-device.component";
 
 interface TagState {
   tag_name: string;
@@ -13,7 +14,7 @@ interface TagState {
 @Component({
   selector: "app-dashboard",
   standalone: true,
-  imports: [CommonModule, LoginComponent],
+  imports: [CommonModule, LoginComponent, AdminDeviceComponent],
   template: `
     <app-login *ngIf="!loggedIn" (loggedIn)="onLoggedIn()"></app-login>
     <ng-container *ngIf="loggedIn">
@@ -28,6 +29,7 @@ interface TagState {
           </tr>
         </tbody>
       </table>
+      <app-admin-device></app-admin-device>
     </ng-container>
   `,
 })
