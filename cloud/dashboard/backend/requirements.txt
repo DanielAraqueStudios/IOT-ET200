@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
+sqlalchemy<2.1
 psycopg2-binary
 paho-mqtt
 pyjwt
