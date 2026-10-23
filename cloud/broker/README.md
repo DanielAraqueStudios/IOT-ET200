@@ -103,7 +103,55 @@ MQTT listener is on `MQTT_PORT` (plaintext if `MQTT_TLS_CERT`/
 ## Deploying to Railway
 
 Declared in `railway.toml` at this folder's root, built from
-`Dockerfile`. Two distinct ports are involved:
+`Dockerfile`. Deploy this into the **same Railway project** as
+`cloud/dashboard`'s services, since this service and `dashboard-backend`
+share project-level variables (see "Railway Shared Variables" below).
+Step by step, from scratch:
+
+1. **Add the service.** In the project already created for
+   `cloud/dashboard` (or create one first if deploying the broker
+   alone), **New Service** → **GitHub Repo**, pick this repo. Set
+   **Root Directory** to `cloud/broker` and **Dockerfile Path** to
+   `Dockerfile` (Settings → Build). Name the service to match
+   `railway.toml`.
+
+2. **Provision this service's own Postgres.** **New** → **Database**
+   → **Add PostgreSQL**, *inside this project* but as its own plugin —
+   do not reuse the dashboard's Postgres (see "Database: dedicated,
+   not shared" above). On this service's **Variables** tab, add
+   `DATABASE_URL` referencing that plugin via Railway's variable
+   picker. No manual migration step is needed — the Dockerfile's `CMD`
+   runs `npx prisma migrate deploy` on every deploy.
+
+3. **Set `MQTT_PORT`** (per-service, e.g. `1883`) and generate the
+   broker's self-signed TLS cert/key pair, setting `MQTT_TLS_CERT` /
+   `MQTT_TLS_KEY` as this service's own variables (`MQTT_TLS_KEY` must
+   stay broker-only, never shared — see below).
+
+4. **Deploy** — push to the linked branch or `railway up` from this
+   folder. Railway's health check hits `GET /health` on `$PORT`
+   automatically (`healthcheckPath` in `railway.toml`); confirm it goes
+   healthy before continuing.
+
+5. **Add the TCP Proxy.** Once healthy, open this service's
+   **Settings → Networking → TCP Proxy**, and point it at `MQTT_PORT`.
+   Railway returns a public `host:port` pair — that is the broker's
+   real reachable address for MQTT clients. This step cannot be done
+   before the service exists and is not declarative in `railway.toml`.
+
+6. **Publish the shared variables.** With the TCP Proxy's `host:port`
+   and the cert content from step 3 in hand, go to the **project's**
+   **Settings → Shared Variables** and set `MQTT_URL` (built from the
+   proxy host:port, `mqtts://host:port`) and a shared cert variable
+   (e.g. `MQTT_TLS_CERT_PEM`, same content as this service's
+   `MQTT_TLS_CERT`). Then switch to `cloud/dashboard`'s walkthrough
+   (its README, step 4) to wire `dashboard-backend` to reference them.
+
+7. **Populate at least one device token manually** (see "Known gap /
+   TODO" above) in this service's Postgres before any client, dashboard
+   backend included, can authenticate.
+
+Two distinct ports are involved in this service once deployed:
 
 - **`$PORT`** (Railway-injected, HTTP) — serves only `GET /health`,
   used for Railway's deploy health check. Not the MQTT port.
