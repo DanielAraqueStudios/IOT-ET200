@@ -128,6 +128,40 @@ Step by step, from scratch:
    `MQTT_TLS_KEY` as this service's own variables (`MQTT_TLS_KEY` must
    stay broker-only, never shared — see below).
 
+   Generate the pair locally with `openssl` — this is the same
+   invocation used for this repo's own local smoke test
+   (`CN=localhost`; RSA 2048; the smoke test used `-days 1` since it's
+   throwaway, use a longer validity like `-days 365` for anything
+   beyond a quick local check):
+
+   ```bash
+   openssl req -x509 -newkey rsa:2048 -nodes \
+     -keyout broker.key -out broker.crt \
+     -days 365 -subj "/CN=localhost"
+   ```
+
+   This writes `broker.crt` (the cert — goes in `MQTT_TLS_CERT` here,
+   and in `MQTT_TLS_CA_CERT` on the dashboard side) and `broker.key`
+   (the private key — `MQTT_TLS_KEY` here only, never shared). To read
+   their contents for pasting into Railway:
+
+   ```bash
+   cat broker.crt   # -> paste as the shared cert variable's value
+   cat broker.key   # -> paste as this service's MQTT_TLS_KEY only
+   ```
+
+   **What this automates and what it doesn't:** the two commands above
+   — generating the files and printing their contents — are the only
+   parts of this step that can be scripted/copy-pasted. Actually
+   entering those values into Railway's project-level Shared Variables
+   or a service's own env vars, signing in to the Railway account
+   (OAuth/`railway login`), and provisioning the Postgres plugin in
+   step 2 all require a human acting in the Railway dashboard or an
+   already-authenticated `railway` CLI session — none of that can be
+   done by running a local command. Generate and read the cert/key
+   locally, then switch to the Railway dashboard (or an authenticated
+   CLI session) to paste the values in.
+
 4. **Deploy** — push to the linked branch or `railway up` from this
    folder. Railway's health check hits `GET /health` on `$PORT`
    automatically (`healthcheckPath` in `railway.toml`); confirm it goes
@@ -174,6 +208,21 @@ Required env vars (see `env.example`):
   `mqtts://`. Once deployed, fetch this cert (or its fingerprint) so
   it can be pinned on the client side (`MQTT_TLS_CA_CERT` for the
   dashboard backend) — do not fabricate or assume a value.
+
+### Env vars at a glance
+
+A documentation aid on top of `env.example` — where each value
+actually comes from when deploying this service to Railway:
+
+| Var | Scope | Where the value comes from |
+|---|---|---|
+| `DATABASE_URL` | per-service | Auto-populated by referencing this service's own Postgres plugin (step 2) — don't hand-type it. |
+| `MQTT_PORT` | per-service | Your own choice (e.g. `1883`); must match what you point the TCP Proxy at in step 5. |
+| `MQTT_TLS_CERT` | per-service here, **same content** as the shared cert | Output of `openssl req ...` above (`broker.crt`), pasted in directly. |
+| `MQTT_TLS_KEY` | per-service, never shared | Output of `openssl req ...` above (`broker.key`) — broker-only. |
+| `MQTT_URL` (dashboard-side) | shared | Built from the TCP Proxy `host:port` Railway returns in step 5 (`mqtts://host:port`); published as a project Shared Variable in step 6. |
+| `MQTT_TLS_CA_CERT` (dashboard-side) | shared, same content as `MQTT_TLS_CERT` | Same `broker.crt` content from above, published as a project Shared Variable in step 6. |
+| `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (dashboard-side) | per-service, per-client | Chosen by you; must match a row you manually insert into this service's `User` table (step 7 — see "Known gap / TODO"). |
 
 ### Railway Shared Variables
 
