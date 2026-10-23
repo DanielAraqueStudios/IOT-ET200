@@ -15,12 +15,17 @@ Usage:
     python scripts/run_local_stack.py down    # stop and remove everything this script creates
     python scripts/run_local_stack.py up --seed-token   # also insert a test User/deviceToken row
 
+Cert + dev credentials: generated once by generate_local_env.py into
+scripts/.local-stack/local.env (reused across runs so a test script
+reading the same file sees consistent values — see that module's
+docstring). This script imports it rather than generating its own
+copy of the cert/credentials, so there is exactly one source of truth.
+
 `up` blocks and cleans everything up (containers + images + the
 generated cert/state dir) on Ctrl+C or `down`, same discipline as the
 earlier manual smoke test teardown.
 """
 import argparse
-import json
 import pathlib
 import shutil
 import signal
@@ -30,11 +35,14 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import generate_local_env  # noqa: E402
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 BROKER_DIR = REPO_ROOT / "cloud" / "broker"
 BACKEND_DIR = REPO_ROOT / "cloud" / "dashboard" / "backend"
 FRONTEND_DIR = REPO_ROOT / "cloud" / "dashboard" / "frontend"
-STATE_DIR = REPO_ROOT / "scripts" / ".local-stack"  # generated certs; gitignored, not committed
+STATE_DIR = generate_local_env.STATE_DIR  # generated certs/env; gitignored, not committed
 
 PREFIX = "iot-et200-local"
 
@@ -60,15 +68,6 @@ PORTS = {
     "frontend_http": 18080,
 }
 
-# Dev-only credentials, wired consistently between the broker's seeded
-# row (with --seed-token) and the backend's mqtt_ingest connection.
-# Not real secrets; local-stack only.
-DEV_MQTT_EMAIL = "dev@local-stack.test"
-DEV_MQTT_DEVICE_TOKEN = "dev-local-stack-token"
-DEV_JWT_SECRET = "dev-local-stack-jwt-secret"
-DEV_ADMIN_USER = "admin"
-DEV_ADMIN_PASSWORD = "admin"
-
 
 def run(cmd, **kwargs):
     print(f"$ {' '.join(cmd)}")
@@ -77,22 +76,6 @@ def run(cmd, **kwargs):
 
 def docker(*args, **kwargs):
     return run(["docker", *args], **kwargs)
-
-
-def cert_paths():
-    return STATE_DIR / "broker.crt", STATE_DIR / "broker.key"
-
-
-def ensure_cert():
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    crt, key = cert_paths()
-    if crt.exists() and key.exists():
-        return
-    run([
-        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-        "-keyout", str(key), "-out", str(crt),
-        "-days", "1", "-subj", "//CN=localhost",
-    ], check=True)
 
 
 def build_image(name, context_dir):
@@ -161,17 +144,21 @@ def bcrypt_hash_via_backend_image(password):
     return result.stdout.strip()
 
 
-def seed_device_token():
+def seed_device_token(email, token):
     docker("exec", NAMES["broker_pg"], "psql", "-U", "broker", "-d", "broker", "-c",
            f"INSERT INTO \"User\" (email, \"passwordHash\", \"deviceToken\") "
-           f"VALUES ('{DEV_MQTT_EMAIL}', 'x', '{DEV_MQTT_DEVICE_TOKEN}') "
+           f"VALUES ('{email}', 'x', '{token}') "
            f"ON CONFLICT (email) DO UPDATE SET \"deviceToken\" = EXCLUDED.\"deviceToken\";",
            check=True)
 
 
 def up(seed_token):
-    ensure_cert()
-    crt, key = cert_paths()
+    env = generate_local_env.generate()
+    dev_mqtt_email = env["LOCAL_STACK_MQTT_TEST_EMAIL"]
+    dev_mqtt_token = env["LOCAL_STACK_MQTT_TEST_DEVICE_TOKEN"]
+    dev_jwt_secret = env["LOCAL_STACK_JWT_SECRET"]
+    dev_admin_user = env["LOCAL_STACK_ADMIN_USER"]
+    dev_admin_password = env["LOCAL_STACK_ADMIN_PASSWORD"]
 
     print("== Building images ==")
     build_image("broker", BROKER_DIR)
@@ -194,26 +181,31 @@ def up(seed_token):
            "-v", f"{STATE_DIR}:/certs",
            IMAGES["broker"], check=True)
 
+    print("== Waiting for broker migrations to apply (prisma migrate deploy on container start) ==")
+    if not wait_http(f"http://localhost:{PORTS['broker_health']}/health", timeout=60):
+        sys.exit("FATAL: broker did not become healthy in time — check `docker logs "
+                  f"{NAMES['broker_app']}`")
+
     if seed_token:
         print("== Seeding a dev device-token row in the broker's DB ==")
-        seed_device_token()
+        seed_device_token(dev_mqtt_email, dev_mqtt_token)
 
     print("== Starting dashboard backend's dev Postgres ==")
     start_postgres(NAMES["backend_pg"], PORTS["backend_pg"], "plc", "plc", "plc")
 
     print("== Hashing dev admin password via the backend image ==")
-    admin_hash = bcrypt_hash_via_backend_image(DEV_ADMIN_PASSWORD)
+    admin_hash = bcrypt_hash_via_backend_image(dev_admin_password)
 
     print("== Starting dashboard backend ==")
     rm_container(NAMES["backend_app"])
     docker("run", "-d", "--name", NAMES["backend_app"],
            "-e", f"DATABASE_URL=postgresql://plc:plc@host.docker.internal:{PORTS['backend_pg']}/plc",
            "-e", f"MQTT_URL=mqtts://host.docker.internal:{PORTS['broker_mqtt']}",
-           "-e", f"MQTT_USERNAME={DEV_MQTT_EMAIL}",
-           "-e", f"MQTT_DEVICE_TOKEN={DEV_MQTT_DEVICE_TOKEN}",
+           "-e", f"MQTT_USERNAME={dev_mqtt_email}",
+           "-e", f"MQTT_DEVICE_TOKEN={dev_mqtt_token}",
            "-e", "MQTT_TLS_CA_CERT=/certs/broker.crt",
-           "-e", f"JWT_SECRET={DEV_JWT_SECRET}",
-           "-e", f"DASHBOARD_ADMIN_USER={DEV_ADMIN_USER}",
+           "-e", f"JWT_SECRET={dev_jwt_secret}",
+           "-e", f"DASHBOARD_ADMIN_USER={dev_admin_user}",
            "-e", f"DASHBOARD_ADMIN_PASSWORD_HASH={admin_hash}",
            "-e", "PORT=8000",
            "-p", f"{PORTS['backend_http']}:8000",
@@ -240,12 +232,12 @@ def up(seed_token):
     print()
     print("== Status ==")
     print(f"broker     health: {'OK' if ok_broker else 'NOT READY'}  http://localhost:{PORTS['broker_health']}/health")
-    print(f"broker     mqtt:   mqtts://localhost:{PORTS['broker_mqtt']}  (cert: {crt})")
+    print(f"broker     mqtt:   mqtts://localhost:{PORTS['broker_mqtt']}  (cert: {generate_local_env.CERT_FILE})")
     print(f"backend    health: {'OK' if ok_backend else 'NOT READY'}  http://localhost:{PORTS['backend_http']}/docs")
     print(f"frontend   health: {'OK' if ok_frontend else 'NOT READY'}  http://localhost:{PORTS['frontend_http']}/")
-    print(f"dashboard admin login: {DEV_ADMIN_USER} / {DEV_ADMIN_PASSWORD}")
+    print(f"dashboard admin login: {dev_admin_user} / {dev_admin_password}")
     if seed_token:
-        print(f"seeded MQTT dev credentials: {DEV_MQTT_EMAIL} / {DEV_MQTT_DEVICE_TOKEN}")
+        print(f"seeded MQTT dev credentials: {dev_mqtt_email} / {dev_mqtt_token}")
     else:
         print("NOTE: no device token seeded (pass --seed-token) — backend's "
               "mqtt_ingest will retry/fail auth against the broker until one exists.")
