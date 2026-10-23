@@ -100,6 +100,41 @@ uvicorn main:app --reload --port 8000
 MQTT listener is on `MQTT_PORT` (plaintext if `MQTT_TLS_CERT`/
 `MQTT_TLS_KEY` are unset).
 
+## Running the MQTT smoke test
+
+`tests/test_smoke.py` connects two MQTT clients over TLS against a running
+broker instance, confirms a publish/subscribe round-trip, and confirms that
+wrong device-token credentials get rejected with a bad-username/password
+CONNACK. It's a script, not a `pytest` suite — run it directly.
+
+Prerequisites:
+
+1. A broker instance running — either `python scripts/run_local_stack.py up`
+   (see that script) or the Docker setup below.
+2. A device-token row in that broker's Postgres (see "Known gap / TODO"
+   above) matching the username/token you'll pass the test.
+3. A generated TLS cert/key pair (see the `openssl` command under
+   "Deploying to Railway" step 3) — generate one locally, point
+   `MQTT_TLS_CERT`/`MQTT_TLS_KEY` at it when starting the broker, and pass
+   the cert's path to the test as `MQTT_TLS_CA_CERT`. Do not commit these
+   files.
+
+Install the test's only extra dependency and run it:
+
+```bash
+pip install -r tests/requirements.txt
+MQTT_HOST=localhost \
+MQTT_PORT=18830 \
+MQTT_TLS_CA_CERT=/path/to/broker.crt \
+MQTT_USERNAME=test@example.com \
+MQTT_DEVICE_TOKEN=testtoken123 \
+python tests/test_smoke.py
+```
+
+All env vars have localhost-oriented defaults except `MQTT_TLS_CA_CERT`,
+which is required. See the module docstring in `tests/test_smoke.py` for the
+full list.
+
 ## Deploying to Railway
 
 Declared in `railway.toml` at this folder's root, built from
