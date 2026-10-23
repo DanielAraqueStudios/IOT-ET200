@@ -133,12 +133,18 @@ device token) — see the env vars above.
 This folder's `railway.toml` declares two services — `dashboard-backend`
 and `dashboard-frontend` — built from their respective Dockerfiles.
 Postgres is provisioned separately as a Railway-managed plugin, not
-declared in `railway.toml`. Follow these steps from scratch:
+declared in `railway.toml`. `cloud/broker` (this repo's MQTT broker,
+see its own README) belongs in the **same Railway project** as these
+two services, since it shares project-level variables with
+`dashboard-backend` — see step 4 below. Follow these steps from
+scratch:
 
 1. **Create the project.** In the Railway dashboard, click **New
    Project** → **Empty Project** (or `railway init` from this repo's
-   root if using the CLI). This project will hold all three resources
-   below (backend, frontend, Postgres) as separate services inside it.
+   root if using the CLI). This project will hold `dashboard-backend`,
+   `dashboard-frontend`, this service's Postgres plugin, and
+   `cloud/broker` (with its own, separate Postgres plugin) as sibling
+   services, so they can share project-level variables.
 
 2. **Add the backend service.**
    - **New Service** → **GitHub Repo**, pick this repo.
@@ -156,21 +162,48 @@ declared in `railway.toml`. Follow these steps from scratch:
    don't hand-copy the connection string). Run `db/schema.sql` against
    that database once (e.g. `railway connect postgres` then `\i
    db/schema.sql`, or `psql "$DATABASE_URL" -f db/schema.sql` with the
-   URL from the plugin's **Connect** tab).
+   URL from the plugin's **Connect** tab). This Postgres is
+   **dedicated to the dashboard** — `cloud/broker` provisions and uses
+   its own, separate Postgres plugin; `DATABASE_URL` is never a shared
+   variable.
 
-4. **Set the backend's remaining variables.** On `dashboard-backend` →
-   **Variables**, add every var from `backend/env.example` except
-   `DATABASE_URL` (already wired in step 3): `MQTT_URL`,
-   `MQTT_OUTPUT_TOPIC`, `MQTT_INPUT_TOPIC`, `MQTT_USERNAME`,
-   `MQTT_DEVICE_TOKEN`, `MQTT_TLS_CA_CERT`, `JWT_SECRET`,
-   `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD_HASH`. See the "Env
-   vars needed" section above for what each one means — none of these
-   are optional for a working deploy except where noted there.
-   `MQTT_TLS_CA_CERT` needs the cert content reachable at a path inside
-   the container; since this repo doesn't yet decide how that file gets
-   distributed to deployments (see "Not yet decided" below), the
-   simplest interim option is a Railway **volume** mounted into the
-   backend service with the cert file copied onto it.
+4. **Set the backend's variables — Shared Variables for anything
+   broker-related, per-service for the rest.** Deploy `cloud/broker`
+   into this same project first (see its README's "Deploying to
+   Railway" section), then come back here:
+   - In the Railway dashboard, open the **project** (not a service) →
+     **Settings → Shared Variables**, and define:
+     - `MQTT_URL` — the broker's reachable `mqtts://host:port`, which
+       you only get after the broker's Railway **TCP Proxy** is
+       provisioned (see its README). Set it here once.
+     - A shared cert variable (e.g. `MQTT_TLS_CERT_PEM`) holding the
+       broker's self-signed certificate content — the **same cert**
+       the broker loads as `MQTT_TLS_CERT`. Shared Variables share one
+       underlying value across services; each service still maps it
+       to its own locally-expected variable name.
+   - On `dashboard-backend` → **Variables**, enable/reference those two
+     shared variables so they populate this service's `MQTT_URL` and
+     `MQTT_TLS_CA_CERT` respectively (Railway's variable picker lets you
+     pick "from Shared Variables" and map it to a service-local name —
+     use `${{shared.MQTT_TLS_CERT_PEM}}` style references, or the
+     dashboard's point-and-click equivalent). `MQTT_TLS_CA_CERT` needs
+     this cert content reachable at a path inside the container — the
+     simplest interim option is a Railway **volume** mounted into the
+     backend service with the cert content written to it from the
+     shared variable at startup, since this repo doesn't yet decide a
+     permanent distribution mechanism (see "Not yet decided" below).
+   - Still per-service on `dashboard-backend` (not shared — these are
+     either per-client credentials or backend-only config): set
+     `MQTT_OUTPUT_TOPIC`, `MQTT_INPUT_TOPIC`, `MQTT_USERNAME`,
+     `MQTT_DEVICE_TOKEN`, `JWT_SECRET`, `DASHBOARD_ADMIN_USER`,
+     `DASHBOARD_ADMIN_PASSWORD_HASH`. See the "Env vars needed" section
+     above for what each one means.
+   - **Device token caveat:** the broker's `User` table starts empty —
+     there is no token-issuing flow yet (see `cloud/broker/README.md`'s
+     "Known gap / TODO"). `MQTT_USERNAME`/`MQTT_DEVICE_TOKEN` here won't
+     authenticate against the broker until a row is manually inserted
+     into the broker's dedicated Postgres for this account. This is a
+     known gap, not something this walkthrough solves.
 
 5. **Deploy the backend** — pushing to the linked branch (or `railway
    up` with this folder as cwd) triggers a build from
@@ -199,16 +232,15 @@ declared in `railway.toml`. Follow these steps from scratch:
    a browser and confirm it renders tag values without errors in the
    console/network tab.
 
-**MQTT broker reachability:** this backend only connects *out* to the
-existing Paint-mixer-hosted broker (`MQTT_URL`) — there's no broker
-service to deploy in this project. That broker's `MQTT_PORT` listens on
-a different port from its own HTTP API's `$PORT` and needs its own
-Railway **TCP Proxy** (Settings → Networking → TCP Proxy, bound to that
-broker service's internal MQTT port) to be reachable at all over
-`mqtts://` from outside its project (same caveat already documented in
-`../../edge/small_scope/README.md`'s "MQTT broker" section) — confirm
-that's configured on the Paint-mixer project before assuming `MQTT_URL`
-will connect.
+**MQTT broker reachability:** this backend only connects *out* to
+`cloud/broker` (this repo's own MQTT broker service, deployed as a
+sibling service in the same Railway project — see its README) via
+`MQTT_URL`. That broker's `MQTT_PORT` listens on a different port from
+its own HTTP API's `$PORT` and needs its own Railway **TCP Proxy**
+(configured on the broker service, not this one) to be reachable at
+all over `mqtts://` — confirm that's provisioned before assuming
+`MQTT_URL` will connect (same caveat documented in
+`../../edge/small_scope/README.md`'s "MQTT broker" section).
 
 Both Dockerfiles are written for this POC stage — review resource
 limits/health checks before relying on this for anything beyond a
