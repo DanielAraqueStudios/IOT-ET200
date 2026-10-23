@@ -130,26 +130,85 @@ device token) — see the env vars above.
 
 ## Deploying to Railway
 
-Two services, declared in `railway.toml` at this folder's root:
+This folder's `railway.toml` declares two services — `dashboard-backend`
+and `dashboard-frontend` — built from their respective Dockerfiles.
+Postgres is provisioned separately as a Railway-managed plugin, not
+declared in `railway.toml`. Follow these steps from scratch:
 
-- **`dashboard-backend`** — built from `backend/Dockerfile` (binds to
-  Railway's injected `$PORT`). Attach a Railway Postgres plugin to get
-  `DATABASE_URL` automatically; set the rest of `backend/env.example`'s
-  vars (renamed `.env.example` → service variables in the Railway
-  dashboard) manually.
-- **`dashboard-frontend`** — built from `frontend/Dockerfile`
-  (multi-stage: `ng build` then served via nginx on `$PORT`). Before
-  building, set `apiUrl` in `frontend/src/environment.ts` to the
-  backend service's public Railway domain.
+1. **Create the project.** In the Railway dashboard, click **New
+   Project** → **Empty Project** (or `railway init` from this repo's
+   root if using the CLI). This project will hold all three resources
+   below (backend, frontend, Postgres) as separate services inside it.
+
+2. **Add the backend service.**
+   - **New Service** → **GitHub Repo**, pick this repo.
+   - Set the service's **Root Directory** to `cloud/dashboard` and
+     **Dockerfile Path** to `backend/Dockerfile` (Settings → Build).
+     Rename the service to `dashboard-backend` to match `railway.toml`.
+   - Railway injects `$PORT` automatically; `uvicorn` in
+     `backend/Dockerfile` must bind to it (already configured).
+
+3. **Provision Postgres.** In the same project, **New** → **Database**
+   → **Add PostgreSQL**. Railway creates the plugin and exposes a
+   `DATABASE_URL` reference variable. On the `dashboard-backend`
+   service's **Variables** tab, add `DATABASE_URL` and reference the
+   Postgres plugin's value (Railway's variable picker offers this —
+   don't hand-copy the connection string). Run `db/schema.sql` against
+   that database once (e.g. `railway connect postgres` then `\i
+   db/schema.sql`, or `psql "$DATABASE_URL" -f db/schema.sql` with the
+   URL from the plugin's **Connect** tab).
+
+4. **Set the backend's remaining variables.** On `dashboard-backend` →
+   **Variables**, add every var from `backend/env.example` except
+   `DATABASE_URL` (already wired in step 3): `MQTT_URL`,
+   `MQTT_OUTPUT_TOPIC`, `MQTT_INPUT_TOPIC`, `MQTT_USERNAME`,
+   `MQTT_DEVICE_TOKEN`, `MQTT_TLS_CA_CERT`, `JWT_SECRET`,
+   `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD_HASH`. See the "Env
+   vars needed" section above for what each one means — none of these
+   are optional for a working deploy except where noted there.
+   `MQTT_TLS_CA_CERT` needs the cert content reachable at a path inside
+   the container; since this repo doesn't yet decide how that file gets
+   distributed to deployments (see "Not yet decided" below), the
+   simplest interim option is a Railway **volume** mounted into the
+   backend service with the cert file copied onto it.
+
+5. **Deploy the backend** — pushing to the linked branch (or `railway
+   up` with this folder as cwd) triggers a build from
+   `backend/Dockerfile`. Watch the deploy logs; once healthy, open
+   **Settings → Networking** and generate a public domain (or add a
+   custom domain) for `dashboard-backend` so the frontend and anyone
+   testing the API can reach it.
+
+6. **Add the frontend service.** Same as step 2 but **Dockerfile
+   Path** = `frontend/Dockerfile`, service name `dashboard-frontend`.
+   Before the first build, set `apiUrl` in `frontend/src/environment.ts`
+   to the backend domain from step 5 (Angular reads this at build time,
+   not from a runtime env var — see `frontend/env.example`) and commit
+   that change so the Dockerfile picks it up. The frontend's
+   `nginx.conf.template` serves the built app on Railway's injected
+   `$PORT`; no extra variables are required for this service.
+
+7. **Deploy the frontend** the same way as step 5, then generate its
+   own public domain from **Settings → Networking**. That's the URL
+   users open.
+
+8. **Verify it's live.** Hit the backend's domain directly:
+   `POST /auth/login` with the admin credentials from step 4, then
+   `GET /api/state` with the returned bearer token (see "Getting a
+   token / calling the API" above). Then open the frontend's domain in
+   a browser and confirm it renders tag values without errors in the
+   console/network tab.
 
 **MQTT broker reachability:** this backend only connects *out* to the
 existing Paint-mixer-hosted broker (`MQTT_URL`) — there's no broker
-service to deploy here. That broker's `MQTT_PORT` listens on a
-different port from its own HTTP API's `$PORT` and needs its own
-Railway **TCP Proxy** to be reachable at all (same caveat already
-documented in `../../edge/small_scope/README.md`'s "MQTT broker"
-section) — confirm that's configured on the Paint-mixer project before
-assuming `MQTT_URL` will connect.
+service to deploy in this project. That broker's `MQTT_PORT` listens on
+a different port from its own HTTP API's `$PORT` and needs its own
+Railway **TCP Proxy** (Settings → Networking → TCP Proxy, bound to that
+broker service's internal MQTT port) to be reachable at all over
+`mqtts://` from outside its project (same caveat already documented in
+`../../edge/small_scope/README.md`'s "MQTT broker" section) — confirm
+that's configured on the Paint-mixer project before assuming `MQTT_URL`
+will connect.
 
 Both Dockerfiles are written for this POC stage — review resource
 limits/health checks before relying on this for anything beyond a
