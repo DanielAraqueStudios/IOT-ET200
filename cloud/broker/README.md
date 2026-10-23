@@ -50,18 +50,27 @@ client. Do not remove or weaken this check.
 Postgres (a separate Railway Postgres plugin), not Paint-mixer's DB —
 it only ever needs this one trimmed table.
 
-**Known gap / TODO — device tokens are not populated yet.** There is
-no user-registration/device-token-issuing endpoint in this service
-(the original one lived in Paint-mixer's own `auth.py`, intentionally
-left out here since it's app-specific, not broker infrastructure). So
-right after this dedicated DB is created, its `User` table is empty —
-`check_device_token` will reject everything until rows exist. Until a
-real issuance flow is built somewhere, rows must be inserted manually
-(e.g. a one-off `INSERT INTO "User" (email, "passwordHash",
-"deviceToken") VALUES (...)` or a short script) for each client that
-needs to connect. This is flagged as a gap, not solved here — building
-token issuance is new scope beyond bringing the broker in and
-deploying it.
+## Device token issuance
+
+This service has no registration/issuance endpoint of its own by
+design (the original one lived in Paint-mixer's app-specific `auth.py`
+and was intentionally left out — not broker infrastructure). Tokens
+are issued from `cloud/dashboard/backend` instead: `POST
+/api/admin/devices` (admin-JWT-protected) writes directly into this
+service's `User` table over a second, dedicated DB connection
+(`BROKER_DATABASE_URL` on the dashboard backend) and returns the
+generated token exactly once. See `cloud/dashboard/README.md`
+"Device token issuance" for the full flow and the frontend form.
+
+That means right after this service's dedicated Postgres is first
+created, its `User` table is empty until someone calls that endpoint
+at least once — `check_device_token` rejects everything until then.
+The issued token is what goes into `edge/small_scope/config.js`'s
+`mqtt.deviceToken` for the gateway to authenticate.
+
+Not built (flagged, not solved here, since it wasn't asked for):
+revoking or rotating an already-issued token, or listing/auditing
+which devices currently hold one.
 
 ## Database migrations
 
@@ -111,8 +120,10 @@ Prerequisites:
 
 1. A broker instance running — either `python scripts/run_local_stack.py up`
    (see that script) or the Docker setup below.
-2. A device-token row in that broker's Postgres (see "Known gap / TODO"
-   above) matching the username/token you'll pass the test.
+2. A device-token row in that broker's Postgres — either call `POST
+   /api/admin/devices` on a running dashboard backend (see "Device token
+   issuance" above), or insert one directly for a quick throwaway test,
+   matching the username/token you'll pass the test.
 3. A generated TLS cert/key pair (see the `openssl` command under
    "Deploying to Railway" step 3) — generate one locally, point
    `MQTT_TLS_CERT`/`MQTT_TLS_KEY` at it when starting the broker, and pass
@@ -216,9 +227,10 @@ Step by step, from scratch:
    `MQTT_TLS_CERT`). Then switch to `cloud/dashboard`'s walkthrough
    (its README, step 4) to wire `dashboard-backend` to reference them.
 
-7. **Populate at least one device token manually** (see "Known gap /
-   TODO" above) in this service's Postgres before any client, dashboard
-   backend included, can authenticate.
+7. **Issue at least one device token** by calling `POST
+   /api/admin/devices` on the deployed dashboard backend (see "Device
+   token issuance" above) before any client, dashboard backend's own
+   MQTT ingest included, can authenticate.
 
 Two distinct ports are involved in this service once deployed:
 
@@ -257,7 +269,7 @@ actually comes from when deploying this service to Railway:
 | `MQTT_TLS_KEY` | per-service, never shared | Output of `openssl req ...` above (`broker.key`) — broker-only. |
 | `MQTT_URL` (dashboard-side) | shared | Built from the TCP Proxy `host:port` Railway returns in step 5 (`mqtts://host:port`); published as a project Shared Variable in step 6. |
 | `MQTT_TLS_CA_CERT` (dashboard-side) | shared, same content as `MQTT_TLS_CERT` | Same `broker.crt` content from above, published as a project Shared Variable in step 6. |
-| `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (dashboard-side) | per-service, per-client | Chosen by you; must match a row you manually insert into this service's `User` table (step 7 — see "Known gap / TODO"). |
+| `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (dashboard-side) | per-service, per-client | Returned by `POST /api/admin/devices` (step 7 — see "Device token issuance"); `BROKER_DATABASE_URL` on the dashboard backend is what lets that endpoint write into this service's `User` table. |
 
 ### Railway Shared Variables
 
@@ -276,12 +288,24 @@ duplicated into each service's own env vars:
   known after deploy — consumed as `MQTT_URL` by the dashboard
   backend.
 
-Per-service, NOT shared: each service's `DATABASE_URL` (separate,
+Per-service, NOT shared: each service's own `DATABASE_URL` (separate,
 dedicated Postgres instances), `MQTT_TLS_KEY` (broker's private key),
 and any individual device token / `MQTT_USERNAME` /
 `MQTT_DEVICE_TOKEN` a specific client uses to authenticate — those are
 per-client credentials, not architecture-level config, and don't
 belong in a project-wide shared variable.
+
+**`BROKER_DATABASE_URL` (on the dashboard backend) is a special
+case — NOT a Shared Variable, but still crosses the service
+boundary.** It's this service's `DATABASE_URL` value, duplicated
+as a second connection string on `cloud/dashboard/backend` solely so
+`POST /api/admin/devices` can write into this service's `User` table.
+It isn't shared via Railway's Shared Variables mechanism because it
+is only ever consumed by that one endpoint on that one other
+service — reference this service's Postgres plugin directly from the
+dashboard backend's own Variables tab (Railway's variable picker can
+reference a plugin from a different service in the same project),
+rather than hand-copying the connection string.
 
 This Dockerfile/service is written for POC stage — review resource
 limits/health checks before relying on this for anything beyond a demo.

@@ -17,10 +17,16 @@ control/write-back UI, no HMI** — display only, by design. This is the
   `plant/small_scope/input/state`, and writes every message into
   `plc_state`. `main.py` exposes read-only REST endpoints
   (`GET /api/state`, `GET /api/history/{tag_name}`), protected by the
-  JWT auth in `auth.py`.
+  JWT auth in `auth.py`, plus one write endpoint:
+  `POST /api/admin/devices` (also JWT-protected), which issues MQTT
+  device tokens — see "Device token issuance" below. This is the one
+  intentional exception to "no write endpoints" in this folder: it
+  writes into `cloud/broker`'s database, not `plc_state`, and doesn't
+  touch the PLC/gateway data path at all.
 - `frontend/` — minimal Angular app that polls `GET /api/state` and
-  renders current tag values. No write endpoints exist anywhere in
-  this repo.
+  renders current tag values, plus an admin form
+  (`admin-device.component.ts`) to issue a device token. No write
+  endpoints affecting PLC/gateway data exist anywhere in this repo.
 
 ## Running locally
 
@@ -42,10 +48,15 @@ pip install -r requirements.txt
 export DATABASE_URL="postgresql://user:pass@localhost:5432/plc"
 export MQTT_URL="mqtts://your-app.up.railway.app:1884"
 # Broker auth: TLS + device token (defense in depth, not TLS-only) —
-# matches the Paint-mixer broker's check_device_token(email, token),
-# sent as the MQTT CONNECT username/password fields:
+# matches cloud/broker's check_device_token(email, token), sent as
+# the MQTT CONNECT username/password fields. Issue one via this same
+# backend's POST /api/admin/devices (see "Device token issuance"
+# below) rather than inserting a row by hand:
 export MQTT_USERNAME="your-account-email@example.com"
-export MQTT_DEVICE_TOKEN="$(get this from GET /api/auth/device-token)"
+export MQTT_DEVICE_TOKEN="issued-by-POST-/api/admin/devices"
+# Second DB connection, used ONLY by POST /api/admin/devices — must
+# point at cloud/broker's own dedicated Postgres, not the one above:
+export BROKER_DATABASE_URL="postgresql://broker:broker@localhost:5432/broker"
 # Broker cert is self-signed (not CA-issued) — point this at a saved
 # copy of that exact cert so paho trusts it specifically. Omitting it
 # falls back to no cert validation at all (logged as a warning) —
@@ -76,6 +87,46 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/state
 Tokens expire after 1 hour; just log in again to get a new one — there
 is no refresh-token flow.
 
+## Device token issuance
+
+`POST /api/admin/devices` (admin-JWT-protected, same auth as the rest
+of this API) is how a device — the `edge/small_scope` gateway, or any
+other MQTT client — gets credentials to authenticate to `cloud/broker`.
+It writes into **the broker's own dedicated Postgres**, not this
+backend's `DATABASE_URL`, over a second connection string,
+`BROKER_DATABASE_URL` (see `backend/env.example`). The `User` table
+shape it writes to is defined once, in `cloud/broker/prisma/schema.prisma`
+— `backend/broker_db.py` mirrors that schema by hand and must be kept
+in sync with it if it ever changes; this backend never manages
+migrations for that table (`cloud/broker`'s Prisma migrations do).
+
+```bash
+curl -X POST http://localhost:8000/api/admin/devices \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "iot2050-gateway@example.com"}'
+# -> {"email": "iot2050-gateway@example.com", "device_token": "..."}
+```
+
+The token is generated with `secrets.token_urlsafe(32)` (not a
+predictable value) and is **returned exactly once**, in that API
+response — there is no way to retrieve it again afterward, matching
+how `check_device_token` only ever compares it, never displays it.
+Copy it immediately into `edge/small_scope/config.js`'s
+`mqtt.deviceToken` (or wherever else that device's MQTT client reads
+its credentials from). Calling the endpoint again for the same email
+re-issues (overwrites) that device's token — the old one stops
+working immediately.
+
+The frontend's admin form (`admin-device.component.ts`, shown below
+the tag table once logged in) does the same thing with a copy button,
+for anyone who'd rather not use `curl`.
+
+**Not built** (flagged as out of scope for this task, not solved
+here): revoking a token without issuing a new one, listing existing
+devices, or any UI/endpoint to see which devices currently hold a
+token.
+
 ### Frontend
 
 ```bash
@@ -95,8 +146,12 @@ deployments.
   reachable over `mqtts://`.
 - `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` — the broker still requires
   `check_device_token` auth (TLS is on top of this, not instead of it)
-  — username is the account email, password is that account's device
-  token from `GET /api/auth/device-token` in Paint-mixer.
+  — username is the account email, password is the device token
+  returned by this backend's own `POST /api/admin/devices` (see
+  "Device token issuance" above).
+- `BROKER_DATABASE_URL` — a second, separate Postgres connection
+  string (the broker's dedicated DB, not this service's own
+  `DATABASE_URL`), used only by `POST /api/admin/devices`.
 - `MQTT_TLS_CA_CERT` — path to the broker's self-signed cert PEM, so
   the client trusts that specific cert instead of the public CA store
   (which a self-signed cert will always fail against). Omitting it
@@ -198,12 +253,20 @@ scratch:
      `MQTT_DEVICE_TOKEN`, `JWT_SECRET`, `DASHBOARD_ADMIN_USER`,
      `DASHBOARD_ADMIN_PASSWORD_HASH`. See the "Env vars needed" section
      above for what each one means.
-   - **Device token caveat:** the broker's `User` table starts empty —
-     there is no token-issuing flow yet (see `cloud/broker/README.md`'s
-     "Known gap / TODO"). `MQTT_USERNAME`/`MQTT_DEVICE_TOKEN` here won't
-     authenticate against the broker until a row is manually inserted
-     into the broker's dedicated Postgres for this account. This is a
-     known gap, not something this walkthrough solves.
+   - **`BROKER_DATABASE_URL`** (per-service, NOT a Shared Variable —
+     see `cloud/broker/README.md`'s Shared Variables section for why):
+     on `dashboard-backend` → **Variables**, reference `cloud/broker`'s
+     Postgres plugin directly (Railway's variable picker can reach
+     across services in the same project) rather than hand-copying its
+     connection string.
+   - **Issuing the first device token:** the broker's `User` table
+     starts empty — `MQTT_USERNAME`/`MQTT_DEVICE_TOKEN` here won't
+     authenticate until you call this backend's own
+     `POST /api/admin/devices` once (see "Device token issuance"
+     above) and set these two vars to what it returns. Do this after
+     step 5 deploys the backend, then redeploy (or just set the vars
+     and let Railway restart the service) so `mqtt_ingest` picks them
+     up.
 
 5. **Deploy the backend** — pushing to the linked branch (or `railway
    up` with this folder as cwd) triggers a build from
@@ -228,9 +291,11 @@ scratch:
 8. **Verify it's live.** Hit the backend's domain directly:
    `POST /auth/login` with the admin credentials from step 4, then
    `GET /api/state` with the returned bearer token (see "Getting a
-   token / calling the API" above). Then open the frontend's domain in
-   a browser and confirm it renders tag values without errors in the
-   console/network tab.
+   token / calling the API" above). Also try `POST /api/admin/devices`
+   (see "Device token issuance") to confirm `BROKER_DATABASE_URL` is
+   wired correctly. Then open the frontend's domain in a browser and
+   confirm it renders tag values without errors in the console/network
+   tab, and that the device-token form works.
 
 **MQTT broker reachability:** this backend only connects *out* to
 `cloud/broker` (this repo's own MQTT broker service, deployed as a
