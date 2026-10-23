@@ -5,3 +5,4 @@ psycopg2-binary
 paho-mqtt
 pyjwt
 passlib[bcrypt]
+bcrypt<4.1
