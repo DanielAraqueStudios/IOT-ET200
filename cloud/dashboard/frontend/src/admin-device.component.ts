@@ -23,21 +23,39 @@ import { AuthService } from "./auth.service";
           Allow this device to send commands (publish to a
           <code>/command</code> topic), not just telemetry
         </label>
-        <button type="submit" [disabled]="submitting">Issue token</button>
+        <button type="submit" class="submit-btn" [disabled]="submitting">Issue token</button>
       </form>
-      <p *ngIf="error" class="error">{{ error }}</p>
+      <p *ngIf="error" class="error-msg">{{ error }}</p>
       <div *ngIf="issuedToken" class="issued-token">
-        <p><strong>Device token (shown once — copy it now):</strong></p>
+        <p class="issued-label">Device token (shown once — copy it now):</p>
         <code>{{ issuedToken }}</code>
-        <button type="button" (click)="copyToken()">{{ copied ? "Copied!" : "Copy" }}</button>
-        <p>Command permission: <strong>{{ issuedCanCommand ? "allowed" : "telemetry only" }}</strong></p>
+        <button type="button" class="copy-btn" (click)="copyToken()">{{ copied ? "Copied!" : "Copy" }}</button>
+        <p class="issued-perm">Command permission: <strong>{{ issuedCanCommand ? "allowed" : "telemetry only" }}</strong></p>
       </div>
     </div>
   `,
   styles: [`
     form { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.75rem; align-items: flex-start; }
     .checkbox-row { display: flex; align-items: center; gap: 0.5rem; color: #a1a1aa; font-size: 0.8rem; }
-    .issued-token { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+    .submit-btn {
+      padding: 10px 18px; border-radius: 8px; border: none;
+      background: #fbbf24; color: #18181b; font-size: 13px;
+      font-weight: 600; cursor: pointer;
+    }
+    .submit-btn:hover:not(:disabled) { background: #fcd34d; }
+    .submit-btn:disabled { background: #27272a; color: #52525b; cursor: not-allowed; }
+    .error-msg { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-top: 0.75rem; }
+    .issued-token {
+      margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;
+      background: #14532d; border: 1px solid #166534; border-radius: 8px; padding: 0.9rem 1rem;
+    }
+    .issued-label { color: #4ade80; font-size: 0.8rem; margin: 0; }
+    .issued-perm { color: #86efac; font-size: 0.8rem; margin: 0; }
+    .copy-btn {
+      padding: 5px 12px; border-radius: 6px; border: 1px solid #166534;
+      background: transparent; color: #4ade80; font-size: 0.75rem; cursor: pointer;
+    }
+    .copy-btn:hover { background: #166534; }
   `],
 })
 export class AdminDeviceComponent {

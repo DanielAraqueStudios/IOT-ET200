@@ -4,10 +4,17 @@ import { environment } from "./environment";
 
 type Health = "ok" | "down" | "checking";
 
+interface Check {
+  label: string;
+  ok: boolean | null;
+  detail: string;
+}
+
 interface LogEntry {
-  at: string;
-  backend: Health;
-  broker: Health;
+  id: number;
+  ts: string;
+  level: "ok" | "warn" | "error";
+  msg: string;
 }
 
 @Component({
@@ -21,17 +28,33 @@ interface LogEntry {
     </div>
     <div class="panel" *ngIf="expanded">
       <div class="panel-header">
-        <span>Status log</span>
-        <span class="close" (click)="expanded = false">x</span>
+        <span class="panel-title">System status</span>
+        <span class="refresh" (click)="poll()">↺</span>
       </div>
-      <div class="rows" *ngIf="log.length; else empty">
-        <div class="row" *ngFor="let entry of log">
-          <span class="time">{{ entry.at }}</span>
-          <span class="chip" [class.ok]="entry.backend === 'ok'" [class.down]="entry.backend === 'down'">backend</span>
-          <span class="chip" [class.ok]="entry.broker === 'ok'" [class.down]="entry.broker === 'down'">broker</span>
+      <div class="checks">
+        <div class="check" *ngFor="let c of checks">
+          <span class="indicator" [style.background]="c.ok === null ? '#3f3f46' : c.ok ? '#4ade80' : '#f87171'"></span>
+          <div class="check-info">
+            <span class="check-label">{{ c.label }}</span>
+            <span class="check-detail">{{ c.detail }}</span>
+          </div>
         </div>
       </div>
-      <ng-template #empty><div class="rows empty-msg">No checks yet</div></ng-template>
+      <div class="ready-badge" [class.ready]="overall === 'ok'">
+        {{ overall === "ok" ? "✔ All systems go" : overall === "checking" ? "Checking..." : "⚠ Check connections" }}
+      </div>
+      <div class="log-header">
+        <span class="panel-title">Event log</span>
+        <span class="clear-btn" (click)="log = []">Clear</span>
+      </div>
+      <div class="log-body">
+        <div class="empty" *ngIf="!log.length">No events yet...</div>
+        <div class="entry" [class]="entry.level" *ngFor="let entry of log">
+          <span class="ts">{{ entry.ts }}</span>
+          <span class="dot-icon">{{ icons[entry.level] }}</span>
+          <span class="msg">{{ entry.msg }}</span>
+        </div>
+      </div>
     </div>
   `,
   styles: [`
@@ -60,61 +83,83 @@ interface LogEntry {
       border-radius: 50%;
       background: #3f3f46;
       flex-shrink: 0;
+      transition: background 0.3s;
     }
     .dot.ok { background: #4ade80; }
     .dot.down { background: #f87171; }
     .panel {
       margin-top: 0.5rem;
-      width: 260px;
-      max-height: 320px;
-      overflow-y: auto;
+      width: 280px;
+      max-height: 420px;
+      display: flex;
+      flex-direction: column;
       background: #09090b;
       border: 1px solid #27272a;
       border-radius: 10px;
+      overflow: hidden;
     }
-    .panel-header {
+    .panel-header, .log-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.5rem 0.75rem;
+      padding: 8px 16px;
       border-bottom: 1px solid #27272a;
-      color: #71717a;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      font-size: 0.65rem;
+      flex-shrink: 0;
     }
-    .close {
-      cursor: pointer;
-      color: #52525b;
-    }
-    .close:hover { color: #a1a1aa; }
-    .rows { padding: 0.25rem 0; }
-    .empty-msg { padding: 0.75rem; color: #52525b; }
-    .row {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.35rem 0.75rem;
-    }
-    .time {
-      font-family: ui-monospace, monospace;
-      color: #52525b;
-      flex: 1;
-    }
-    .chip {
-      border-radius: 6px;
-      padding: 0.1rem 0.4rem;
+    .log-header { border-top: 1px solid #27272a; }
+    .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #52525b; }
+    .refresh, .clear-btn { color: #52525b; cursor: pointer; user-select: none; }
+    .refresh { font-size: 14px; }
+    .clear-btn { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid #27272a; }
+    .refresh:hover, .clear-btn:hover { color: #a1a1aa; border-color: #52525b; }
+    .checks { padding: 8px 0; }
+    .check { display: flex; align-items: center; gap: 10px; padding: 6px 16px; }
+    .indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .check-info { display: flex; flex-direction: column; gap: 1px; }
+    .check-label { font-size: 12px; color: #e4e4e7; }
+    .check-detail { font-size: 10px; color: #52525b; font-family: ui-monospace, monospace; }
+    .ready-badge {
+      margin: 8px 16px 12px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      text-align: center;
       background: #27272a;
       color: #71717a;
+      transition: all 0.3s;
     }
-    .chip.ok { background: #14532d; color: #4ade80; }
-    .chip.down { background: #450a0a; color: #f87171; }
+    .ready-badge.ready { background: #14532d; color: #4ade80; }
+    .log-body {
+      flex: 1;
+      max-height: 160px;
+      overflow-y: auto;
+      padding: 6px 0;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      display: flex;
+      flex-direction: column;
+    }
+    .empty { color: #3f3f46; padding: 12px 16px; }
+    .entry { display: flex; align-items: baseline; gap: 8px; padding: 2px 16px; line-height: 1.6; }
+    .entry:hover { background: #18181b; }
+    .ts { color: #3f3f46; flex-shrink: 0; }
+    .dot-icon { flex-shrink: 0; width: 12px; text-align: center; }
+    .msg { color: #a1a1aa; word-break: break-word; }
+    .entry.ok .msg { color: #4ade80; }
+    .entry.error .msg { color: #f87171; }
+    .entry.warn .msg { color: #fbbf24; }
   `],
 })
 export class SystemStatusComponent implements OnInit, OnDestroy {
   expanded = false;
   overall: Health = "checking";
+  checks: Check[] = [
+    { label: "Dashboard backend", ok: null, detail: "Checking..." },
+    { label: "MQTT broker", ok: null, detail: "Checking..." },
+  ];
   log: LogEntry[] = [];
+  icons = { ok: "✔", warn: "⚠", error: "✘" };
+  private seq = 0;
   private timer?: ReturnType<typeof setInterval>;
 
   ngOnInit() {
@@ -126,21 +171,40 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
-  private async poll() {
-    let backend: Health = "down";
-    let broker: Health = "down";
+  async poll() {
+    let backendOk = false;
+    let brokerOk = false;
+    let backendDetail = "No response";
+    let brokerDetail = "No response";
     try {
       const res = await fetch(`${environment.apiUrl}/api/health`);
       if (res.ok) {
         const data = await res.json();
-        backend = data.backend === "up" ? "ok" : "down";
-        broker = data.broker === "up" ? "ok" : "down";
+        backendOk = data.backend === "up";
+        brokerOk = data.broker === "up";
+        backendDetail = backendOk ? "Connected" : "Down";
+        brokerDetail = brokerOk ? "MQTT connected" : "Not connected";
       }
     } catch {
-      backend = "down";
-      broker = "down";
+      backendDetail = "Unreachable";
+      brokerDetail = "Unreachable";
     }
-    this.overall = backend === "ok" && broker === "ok" ? "ok" : "down";
-    this.log = [{ at: new Date().toLocaleTimeString(), backend, broker }, ...this.log].slice(0, 20);
+    this.setCheck(0, backendOk, backendDetail);
+    this.setCheck(1, brokerOk, brokerDetail);
+    this.overall = backendOk && brokerOk ? "ok" : "down";
+  }
+
+  private setCheck(i: number, ok: boolean, detail: string) {
+    const prev = this.checks[i];
+    if (prev.ok !== ok) {
+      this.addLog(ok ? "ok" : "warn", `${prev.label}: ${detail}`);
+    }
+    this.checks[i] = { ...prev, ok, detail };
+  }
+
+  private addLog(level: "ok" | "warn" | "error", msg: string) {
+    const now = new Date();
+    const ts = now.toLocaleTimeString() + "." + String(now.getMilliseconds()).padStart(3, "0");
+    this.log = [{ id: ++this.seq, ts, level, msg }, ...this.log].slice(0, 50);
   }
 }
