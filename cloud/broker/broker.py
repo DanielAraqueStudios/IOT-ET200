@@ -230,15 +230,35 @@ class MqttBroker:
 
 # ── TLS ───────────────────────────────────────────────────────────────────────
 
+def _as_file_path(value: str, suffix: str) -> str:
+    """MQTT_TLS_CERT/MQTT_TLS_KEY are a file path when running the local
+    Docker stack (generate_local_env.py mounts real files), but a cloud
+    host like Railway has no shared filesystem to point a variable at — so
+    there they hold the PEM content itself, pasted directly into the
+    variable. ssl.SSLContext.load_cert_chain only accepts a path, so PEM
+    content gets written to a throwaway file first."""
+    if value.lstrip().startswith("-----BEGIN"):
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, "w") as f:
+            f.write(value)
+        return path
+    return value
+
+
 def build_ssl_context() -> "ssl.SSLContext | None":
-    """Build the broker's TLS context from MQTT_TLS_CERT/MQTT_TLS_KEY env vars
-    (paths to a PEM cert chain and private key). Returns None (plaintext) if
-    either is unset, so local/dev runs without certs keep working."""
-    cert_path = os.environ.get("MQTT_TLS_CERT")
-    key_path  = os.environ.get("MQTT_TLS_KEY")
-    if not cert_path or not key_path:
+    """Build the broker's TLS context from MQTT_TLS_CERT/MQTT_TLS_KEY env
+    vars — each either a path to a PEM file (local Docker stack) or the PEM
+    content itself (cloud deploys with no shared filesystem, e.g. Railway).
+    Returns None (plaintext) if either is unset, so local/dev runs without
+    certs keep working."""
+    cert_value = os.environ.get("MQTT_TLS_CERT")
+    key_value  = os.environ.get("MQTT_TLS_KEY")
+    if not cert_value or not key_value:
         print("[MQTT] MQTT_TLS_CERT/MQTT_TLS_KEY not set — broker running without TLS")
         return None
+    cert_path = _as_file_path(cert_value, ".crt")
+    key_path  = _as_file_path(key_value, ".key")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
     return context

@@ -56,6 +56,109 @@ MQTT broker  (Railway)
 cloud/dashboard  (Railway: FastAPI + Postgres + Angular)
 ```
 
+## Deploying to Railway
+
+`cloud/broker` and `cloud/dashboard` (`backend` + `frontend`) deploy as
+three separate services inside **one Railway project**, because the
+backend and broker must share a couple of values via Railway's
+project-level **Shared Variables**. Full detail lives in
+[`cloud/broker/README.md`](./cloud/broker/README.md) ("Deploying to
+Railway" / "Railway Shared Variables") and
+[`cloud/dashboard/README.md`](./cloud/dashboard/README.md) ("Deploying
+to Railway") — this is the condensed order to follow so you don't have
+to reconstruct it from two files:
+
+1. **Create (or open) one Railway project.** Everything below goes
+   into this same project, not separate ones.
+
+2. **Deploy `cloud/broker` first.**
+   - New Service → GitHub Repo → this repo.
+   - Settings → Source: **Root Directory** = `cloud/broker`.
+   - Settings → Build: **Dockerfile Path** = `Dockerfile` (just
+     `Dockerfile`, not `cloud/broker/Dockerfile` — Root Directory
+     already scopes it; combining both breaks the build context).
+   - Add a Postgres plugin to this service only (its own
+     `DATABASE_URL` — never shared with the dashboard).
+   - Set this service's own vars: `MQTT_PORT` (e.g. `8883`),
+     `MQTT_TLS_CERT`, `MQTT_TLS_KEY`. Generate the self-signed cert/key
+     locally first — use the TCP Proxy hostname from the step below as
+     the CN/SAN once you have it (a cert minted before that exists can
+     be regenerated after):
+     ```bash
+     openssl req -x509 -newkey rsa:2048 -nodes \
+       -keyout broker.key -out broker.crt \
+       -days 825 -subj "//CN=<tcp-proxy-host>" \
+       -addext "subjectAltName=DNS:<tcp-proxy-host>"
+     ```
+     Paste the full contents of `broker.crt` (including the
+     `BEGIN`/`END` lines) into `MQTT_TLS_CERT`, and `broker.key` into
+     `MQTT_TLS_KEY`.
+   - Deploy. Confirm `GET /health` on the Railway-assigned `$PORT`
+     goes healthy (this is Railway's own deploy health check, separate
+     from the MQTT port).
+   - Settings → Networking → **TCP Proxy**, point it at `MQTT_PORT`.
+     Railway returns a public `host:port` — this only exists after the
+     service is deployed, it's not something you can set up front.
+
+3. **Publish the project-level Shared Variables** — project
+   **Settings → Shared Variables** (the project's own settings, not a
+   service's Variables tab):
+   - `MQTT_URL` = `mqtts://<tcp-proxy-host>:<tcp-proxy-port>` from
+     step 2's TCP Proxy.
+   - `MQTT_TLS_CERT_PEM` = the exact same cert content as the broker's
+     own `MQTT_TLS_CERT` from step 2.
+
+4. **Deploy `cloud/dashboard/backend`** into the same project.
+   - Root Directory = `cloud/dashboard/backend`, same Dockerfile-path
+     rule as step 2.
+   - On this service's own **Variables** tab, reference the two Shared
+     Variables from step 3 and map them to the names this service
+     expects: Shared `MQTT_URL` → local `MQTT_URL`; Shared
+     `MQTT_TLS_CERT_PEM` → local `MQTT_TLS_CA_CERT`.
+   - Add a **separate** Postgres plugin dedicated to this service —
+     its `DATABASE_URL` is never shared with the broker's.
+   - Set `BROKER_DATABASE_URL` by referencing the **broker's** Postgres
+     plugin directly from this service's Variables tab (Railway's
+     picker can reach across services in the same project). This is
+     deliberately *not* a Shared Variable — see
+     `cloud/broker/README.md`'s Shared Variables section for why.
+   - Set the remaining per-service vars: `JWT_SECRET`,
+     `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD_HASH`,
+     `MQTT_INPUT_TOPIC`, `MQTT_OUTPUT_TOPIC`. Generate the first two
+     values locally:
+     ```bash
+     # JWT_SECRET
+     openssl rand -hex 32
+
+     # DASHBOARD_ADMIN_PASSWORD_HASH — bcrypt hash of your chosen
+     # admin password (pip install "passlib[bcrypt]" first); the
+     # plaintext password itself never goes into Railway
+     python3 -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt']).hash('your-chosen-password'))"
+     ```
+   - Deploy, confirm healthy.
+
+5. **Issue the first device token** — call `POST
+   /api/admin/devices` on the now-deployed backend (see
+   `cloud/dashboard/README.md`, "Device token issuance"). Take the
+   `device_token` it returns and set `MQTT_USERNAME` /
+   `MQTT_DEVICE_TOKEN` on `dashboard-backend`, then redeploy (or let
+   Railway auto-restart on the var change) so `mqtt_ingest` picks them
+   up. Nothing can authenticate to the broker before this step — the
+   `User` table starts empty.
+
+6. **Deploy `cloud/dashboard/frontend`** the same way (its own section
+   in `cloud/dashboard/README.md`).
+
+**Quick reference — what's shared vs. per-service:**
+
+| Shared (project-level) | Per-service |
+|---|---|
+| `MQTT_URL` | `DATABASE_URL` (each service has its own) |
+| `MQTT_TLS_CERT_PEM` (→ `MQTT_TLS_CERT` on broker, `MQTT_TLS_CA_CERT` on backend) | `MQTT_TLS_KEY` (broker's private key — never shared) |
+| | `BROKER_DATABASE_URL` (backend → broker's Postgres, cross-service reference, not Shared Variables) |
+| | `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (per-client credentials) |
+| | `JWT_SECRET`, `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD_HASH` |
+
 ## Security posture
 
 - The PLC never connects directly to the internet; only the IOT2050
