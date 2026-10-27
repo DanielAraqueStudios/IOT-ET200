@@ -12,7 +12,7 @@ the source of truth — this is a mirror, not an independent
 definition. If that schema changes, update this file to match.
 """
 import os
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, func
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, func
 from sqlalchemy.orm import DeclarativeBase
 
 BROKER_DATABASE_URL = os.environ["BROKER_DATABASE_URL"]
@@ -29,5 +29,8 @@ class BrokerUser(BrokerBase):
     id           = Column(Integer, primary_key=True, autoincrement=True)
     email        = Column(String,  unique=True, nullable=False)
     passwordHash = Column(String,  nullable=False)
+    # Bcrypt hash of the device token — see main.py:create_device, which
+    # hashes before storing and returns the plaintext token only once.
     deviceToken  = Column(String,  nullable=True)
+    canCommand   = Column(Boolean, nullable=False, default=False)
     createdAt    = Column(DateTime, default=func.now())

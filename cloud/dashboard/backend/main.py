@@ -95,25 +95,33 @@ def tag_history(tag_name: str, limit: int = 100, user: str = Depends(require_aut
 
 class CreateDeviceRequest(BaseModel):
     email: str
+    # Topic ACL (see cloud/broker/broker.py): whether this device may
+    # PUBLISH to a "/command" topic. Defaults to False — only devices
+    # that legitimately need to send commands (not just telemetry)
+    # should be issued a token with this set.
+    can_command: bool = False
 
 
 class CreateDeviceResponse(BaseModel):
     email: str
     device_token: str
+    can_command: bool
 
 
 @app.post("/api/admin/devices", response_model=CreateDeviceResponse, status_code=201)
 def create_device(body: CreateDeviceRequest, user: str = Depends(require_auth)):
     """Creates (or re-issues a token for) a device entry in the broker's
-    User table. The returned device_token is shown exactly once — it is
-    not retrievable again afterward, matching the broker's own
-    check_device_token lookup, which only ever compares against the
-    stored hash-equivalent value, never displays it back."""
+    User table. The returned device_token is shown exactly once — only
+    its bcrypt hash is stored, matching the broker's own
+    check_device_token, which verifies against that hash and never
+    displays (or stores) the plaintext value."""
     token = secrets.token_urlsafe(32)
+    token_hash = pwd_context.hash(token)
     with Session(broker_engine) as s:
         existing = s.query(BrokerUser).filter_by(email=body.email).first()
         if existing:
-            existing.deviceToken = token
+            existing.deviceToken = token_hash
+            existing.canCommand = body.can_command
         else:
             # passwordHash is unused by the broker's device-token auth
             # (check_device_token only compares deviceToken) but the
@@ -123,7 +131,8 @@ def create_device(body: CreateDeviceRequest, user: str = Depends(require_auth)):
             s.add(BrokerUser(
                 email=body.email,
                 passwordHash=pwd_context.hash(secrets.token_urlsafe(32)),
-                deviceToken=token,
+                deviceToken=token_hash,
+                canCommand=body.can_command,
             ))
         s.commit()
-    return CreateDeviceResponse(email=body.email, device_token=token)
+    return CreateDeviceResponse(email=body.email, device_token=token, can_command=body.can_command)
