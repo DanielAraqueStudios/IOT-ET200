@@ -18,7 +18,9 @@ Configuration (env vars, all optional — defaults target a local broker):
                             since there's no safe cert to assume is present)
     MQTT_USERNAME           device-token username to authenticate with
     MQTT_DEVICE_TOKEN       the matching device token (password)
-    MQTT_TEST_TOPIC          default: smoke/test
+    MQTT_TEST_TOPIC          default: plant/smoke/test (must start with the
+                              broker's MQTT_TOPIC_PREFIX, default "plant/",
+                              or the broker's topic ACL will reject it)
 """
 import os
 import ssl
@@ -32,7 +34,7 @@ PORT = int(os.environ.get("MQTT_PORT", "18830"))
 CERT = os.environ.get("MQTT_TLS_CA_CERT")
 USERNAME = os.environ.get("MQTT_USERNAME", "test@example.com")
 PASSWORD = os.environ.get("MQTT_DEVICE_TOKEN", "testtoken123")
-TOPIC = os.environ.get("MQTT_TEST_TOPIC", "smoke/test")
+TOPIC = os.environ.get("MQTT_TEST_TOPIC", "plant/smoke/test")
 PAYLOAD = b"hello-from-smoke-test"
 
 if not CERT:

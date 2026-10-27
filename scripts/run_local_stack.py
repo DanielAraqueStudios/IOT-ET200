@@ -145,10 +145,17 @@ def bcrypt_hash_via_backend_image(password):
 
 
 def seed_device_token(email, token):
+    # The broker now stores/verifies a bcrypt hash of the device token
+    # (see cloud/broker/auth.py), never the plaintext value — hash it
+    # the same way the real issuance endpoint does before seeding.
+    # canCommand=true here so the dev/test token can exercise the
+    # command-topic ACL in tests/test_smoke.py and interactive_probe.py.
+    token_hash = bcrypt_hash_via_backend_image(token)
     docker("exec", NAMES["broker_pg"], "psql", "-U", "broker", "-d", "broker", "-c",
-           f"INSERT INTO \"User\" (email, \"passwordHash\", \"deviceToken\") "
-           f"VALUES ('{email}', 'x', '{token}') "
-           f"ON CONFLICT (email) DO UPDATE SET \"deviceToken\" = EXCLUDED.\"deviceToken\";",
+           f"INSERT INTO \"User\" (email, \"passwordHash\", \"deviceToken\", \"canCommand\") "
+           f"VALUES ('{email}', 'x', '{token_hash}', true) "
+           f"ON CONFLICT (email) DO UPDATE SET \"deviceToken\" = EXCLUDED.\"deviceToken\", "
+           f"\"canCommand\" = true;",
            check=True)
 
 
