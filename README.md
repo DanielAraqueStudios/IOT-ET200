@@ -182,3 +182,27 @@ to reconstruct it from two files:
   control in this minimal scope — see `Arquitecture.md` and
   `edge/small_scope/README.md` for the accepted-risk rationale before
   extending this beyond a lab/POC deployment.
+
+## Future implementation
+
+Not built yet — ideas evaluated and intentionally deferred, not forgotten:
+
+- **TOTP two-factor login** (Google Authenticator–style): per-account
+  secret, QR-code enrollment, a 6-digit code required at login in
+  addition to the password. Moderate effort on its own (`pyotp` handles
+  the actual TOTP logic), but the dashboard currently has a single
+  hardcoded admin account via `DASHBOARD_ADMIN_USER`/
+  `DASHBOARD_ADMIN_PASSWORD_HASH` env vars, not a real accounts table —
+  "per account" 2FA implies building that table first.
+- **Step-up re-authentication before sending a PLC command**: require a
+  fresh TOTP code again specifically at the point of calling
+  `POST /api/command` (see "Deploying to Railway" above), not just at
+  login. This is the harder half: a TOTP code is valid for its full
+  ~30s window and reusable within it, so a naive re-check allows replay
+  within that window; doing this properly means deciding between
+  re-entering a code on every single command (safer, worse UX) or a
+  short-lived "step-up" approval covering a burst of commands (better
+  UX, more to build — it's effectively a second, shorter-lived session
+  layered on top of the JWT), plus rate-limiting/lockout on failed
+  codes, which doesn't exist anywhere in this app today and matters
+  more here since this gate controls physical hardware.
