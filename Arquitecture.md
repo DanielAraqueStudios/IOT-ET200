@@ -127,6 +127,14 @@ remoto (no aplicado aún a `FB_Subrutinas.scl`/`FB_ServoProfinet` en este
 commit — añadir `Remote_*` tags y el `OR` correspondiente cuando se
 decida qué comandos exactos se exponen).
 
+**Nota (cloud dashboard):** `cloud/dashboard` ahora tiene un camino de
+escritura hacia este mismo `commandTopic` existente (vía
+`POST /api/command` en el backend, protegido por JWT de admin) —
+publica en el topic MQTT que el gateway ya consume, sin tocar nada
+bajo `edge/`. No cambia la decisión "sin interlock" documentada
+arriba; ver `cloud/dashboard/README.md` ("Remote command") para el
+detalle.
+
 ## 💻 Paso 2: Gateway Node.js en el IOT2050
 
 Ver `IOT/gateway/` en este repositorio para el código y las

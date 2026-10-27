@@ -46,6 +46,11 @@ TOPICS = [
     os.environ.get("MQTT_INPUT_TOPIC", "plant/small_scope/input/state"),
 ]
 
+# The paho client instance set by start(), used by publish() below. Module-
+# level rather than returned-and-threaded-through, matching how `_connected`
+# is already tracked here (main.py only ever holds one of these).
+_client = None
+
 
 def _parse_url(url: str):
     # mqtts://host:port -> (host, port)
@@ -78,7 +83,26 @@ def _on_message(client, userdata, msg):
     print(f"[mqtt_ingest] {tag_name} = {value}")
 
 
+def publish(topic: str, payload: str) -> None:
+    """Publishes to the broker over this module's already-connected paho
+    client (same connection used for the subscribe-only ingest above).
+    Raises RuntimeError if there's no connected client to publish with —
+    callers (main.py) should check is_connected() first and surface a
+    clear error rather than relying on this to fail loudly after the
+    fact, but this is a backstop either way. The broker's own ACL (see
+    cloud/broker/broker.py _publish_allowed) separately requires this
+    client's identity to have can_command=True for a `/command` topic —
+    a rejected publish here still returns immediately (paho's publish()
+    doesn't surface broker-side ACL rejections synchronously), so this
+    only catches "not connected", not "connected but not authorized"."""
+    if _client is None or not is_connected():
+        raise RuntimeError("MQTT client is not connected — cannot publish")
+    info = _client.publish(topic, payload)
+    info.wait_for_publish(timeout=5)
+
+
 def start():
+    global _client
     host, port = _parse_url(MQTT_URL)
     client = mqtt.Client(protocol=mqtt.MQTTv311)
     client.username_pw_set(MQTT_USERNAME, MQTT_DEVICE_TOKEN)
@@ -108,4 +132,5 @@ def start():
     client.on_message = _on_message
     client.connect(host, port, keepalive=60)
     client.loop_start()
+    _client = client
     return client

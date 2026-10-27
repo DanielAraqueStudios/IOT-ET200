@@ -1,10 +1,16 @@
 # PLC Cloud Dashboard
 
-Read-only cloud dashboard for the `../../edge/small_scope` gateway.
-Shows current and historical input/output tag state. **No
-control/write-back UI, no HMI** — display only, by design. This is the
-**cloud half** of this repo — the only part ever deployed to Railway
-(see `../../edge/small_scope/README.md` for the half that isn't).
+Cloud dashboard for the `../../edge/small_scope` gateway. Shows current
+and historical input/output tag state, and lets a logged-in admin send
+an ON/OFF command to the PLC's output. This is the **cloud half** of
+this repo — the only part ever deployed to Railway (see
+`../../edge/small_scope/README.md` for the half that isn't).
+
+The write path reuses the gateway's existing command topic
+(`plant/small_scope/output/command`, see `edge/small_scope/config.js`)
+— nothing on the edge/gateway side changed for this; see
+`../../Arquitecture.md`'s "Comandos físicos vs. remotos" section for
+the (already-settled, sin-interlock) design this builds on.
 
 ## Architecture
 
@@ -15,22 +21,23 @@ control/write-back UI, no HMI** — display only, by design. This is the
   TLS + device-token auth (`mqtts://`, matching the edge gateway's auth
   model) to `plant/small_scope/output/state` and
   `plant/small_scope/input/state`, and writes every message into
-  `plc_state`. `main.py` exposes read-only REST endpoints
-  (`GET /api/state`, `GET /api/history/{tag_name}`), protected by the
-  JWT auth in `auth.py`, plus an unauthenticated `GET /api/health`
-  (backend liveness + MQTT ingest connection state, for the frontend's
-  status widget) and one write endpoint:
-  `POST /api/admin/devices` (also JWT-protected), which issues MQTT
-  device tokens — see "Device token issuance" below. This is the one
-  intentional exception to "no write endpoints" in this folder: it
-  writes into `cloud/broker`'s database, not `plc_state`, and doesn't
-  touch the PLC/gateway data path at all.
-- `frontend/` — minimal Angular app that polls `GET /api/state` and
-  renders current tag values, plus an admin form
-  (`admin-device.component.ts`) to issue a device token, and a
-  system-status widget (`system-status.component.ts`) that polls
-  `GET /api/health`. No write endpoints affecting PLC/gateway data
-  exist anywhere in this repo.
+  `plc_state`; it also exposes `publish()`, used by the command
+  endpoint below, over that same connected client. `main.py` exposes
+  read endpoints (`GET /api/state`, `GET /api/history/{tag_name}`),
+  protected by the JWT auth in `auth.py`, an unauthenticated
+  `GET /api/health` (backend liveness + MQTT ingest connection state,
+  for the frontend's status widget), `POST /api/admin/devices` (JWT-
+  protected), which issues MQTT device tokens — see "Device token
+  issuance" below — and **`POST /api/command`** (JWT-protected), which
+  publishes `"ON"`/`"OFF"` onto the gateway's command topic
+  (`MQTT_COMMAND_TOPIC`, default `plant/small_scope/output/command`) —
+  see "Remote command" below.
+- `frontend/` — Angular app that polls `GET /api/state` and renders
+  current tag values as cards, with ON/OFF buttons that call
+  `POST /api/command` and show pending/done/error feedback; plus an
+  admin form (`admin-device.component.ts`) to issue a device token, and
+  a system-status widget (`system-status.component.ts`) that polls
+  `GET /api/health`.
 
 ## Running locally
 
@@ -145,6 +152,51 @@ here): revoking a token without issuing a new one, listing existing
 devices, or any UI/endpoint to see which devices currently hold a
 token.
 
+## Remote command (write path into the PLC's output)
+
+`POST /api/command` (admin-JWT-protected, same auth as the rest of
+this API) takes `{"value": "ON"}` or `{"value": "OFF"}` and publishes
+that payload onto `MQTT_COMMAND_TOPIC` (default
+`plant/small_scope/output/command`, matching
+`edge/small_scope/config.js`'s `mqtt.commandTopic`). The gateway
+already subscribes to that topic and writes to the PLC over OPC UA —
+nothing under `edge/` changed for this.
+
+```bash
+curl -X POST http://localhost:8000/api/command \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"value": "ON"}'
+# -> {"published": true, "topic": "plant/small_scope/output/command", "value": "ON"}
+```
+
+If `mqtt_ingest`'s client isn't currently connected, this returns
+`503` with a clear detail message rather than silently dropping the
+command. It can't, however, detect a broker-side ACL rejection
+synchronously (paho's `publish()` doesn't surface that) — if the
+broker rejects the publish because this backend's own MQTT identity
+has `can_command=False`, the endpoint will still report `published:
+true` even though the PLC never sees it. **This backend's own MQTT
+identity (`MQTT_USERNAME`/`MQTT_DEVICE_TOKEN`) must be issued with
+`can_command=True`** via `POST /api/admin/devices` (passing the
+backend's own `MQTT_USERNAME` email) for this to actually work — see
+"Device token issuance" above. If the currently-deployed
+`MQTT_DEVICE_TOKEN` was issued before this feature existed, it was
+almost certainly issued with the default `can_command=False` and
+needs to be re-issued:
+
+```bash
+curl -X POST https://<backend-domain>/api/admin/devices \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "<value of MQTT_USERNAME>", "can_command": true}'
+# -> copy the returned device_token into MQTT_DEVICE_TOKEN on Railway
+#    (dashboard-backend service variables) and let it restart.
+```
+
+Add `MQTT_COMMAND_TOPIC` to the "Env vars needed" list below if it
+ever needs to differ from the gateway's default.
+
 ### Frontend
 
 ```bash
@@ -178,6 +230,11 @@ deployments.
   lab/POC only.
 - `MQTT_OUTPUT_TOPIC` / `MQTT_INPUT_TOPIC` — override if the gateway's
   topic names change.
+- `MQTT_COMMAND_TOPIC` — override if the gateway's command topic
+  changes; defaults to `plant/small_scope/output/command`, matching
+  `edge/small_scope/config.js`. See "Remote command" above — this
+  backend's own device identity must have `can_command=True` in the
+  broker for publishes to this topic to actually be accepted.
 - `JWT_SECRET` — signing secret for the dashboard REST API's JWTs.
   Used only for the REST API; unrelated to the MQTT connection above.
 - `DASHBOARD_ADMIN_USER` / `DASHBOARD_ADMIN_PASSWORD_HASH` — the
