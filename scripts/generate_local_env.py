@@ -24,10 +24,16 @@ KEY_FILE = STATE_DIR / "broker.key"
 
 
 def generate_cert():
+    # SAN must cover both names clients actually connect with: "localhost"
+    # from the host (e.g. tests/test_smoke.py), and "host.docker.internal"
+    # from inside the other containers (backend's mqtt_ingest.py) — a
+    # CN-only cert fails TLS hostname verification for whichever name
+    # isn't the CN.
     subprocess.run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
         "-keyout", str(KEY_FILE), "-out", str(CERT_FILE),
         "-days", "1", "-subj", "//CN=localhost",
+        "-addext", "subjectAltName=DNS:localhost,DNS:host.docker.internal",
     ], check=True)
 
 
