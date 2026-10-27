@@ -207,6 +207,12 @@ def up(seed_token):
     rm_container(NAMES["backend_app"])
     docker("run", "-d", "--name", NAMES["backend_app"],
            "-e", f"DATABASE_URL=postgresql://plc:plc@host.docker.internal:{PORTS['backend_pg']}/plc",
+           # Separate connection to the BROKER's own dev Postgres (not this
+           # backend's own DATABASE_URL above) — see broker_db.py, which
+           # POST /api/admin/devices uses to read/write the broker's User
+           # table. Broker's dev Postgres creds come from start_postgres()
+           # above ("broker"/"broker"/"broker").
+           "-e", f"BROKER_DATABASE_URL=postgresql://broker:broker@host.docker.internal:{PORTS['broker_pg']}/broker",
            "-e", f"MQTT_URL=mqtts://host.docker.internal:{PORTS['broker_mqtt']}",
            "-e", f"MQTT_USERNAME={dev_mqtt_email}",
            "-e", f"MQTT_DEVICE_TOKEN={dev_mqtt_token}",
