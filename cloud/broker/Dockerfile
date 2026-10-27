@@ -25,9 +25,12 @@ RUN npm install --omit=dev=false
 
 COPY . .
 
-# Railway injects $PORT for the HTTP health check; uvicorn must bind to
-# it, not a hardcoded port. The MQTT listener binds MQTT_PORT separately
-# and is reached through Railway's TCP Proxy, not $PORT — see README.md.
+# This service also runs a TCP Proxy (for MQTT), and Railway ties its
+# injected $PORT to that proxy's target port (MQTT_PORT, 1883) rather
+# than the HTTP domain's target port — so uvicorn binding $PORT would
+# collide with our own MQTT listener binding MQTT_PORT in the same
+# process. Bind uvicorn to a fixed HTTP_PORT instead, matching Settings
+# → Networking → Public Networking → Target port (see README.md).
 # `prisma migrate deploy` applies any pending migrations against
 # DATABASE_URL before the app starts (Prisma's recommended deploy-time
 # migration step; see README.md "Database migrations").
@@ -38,4 +41,4 @@ COPY . .
 # uvicorn — the old process lingers holding MQTT_PORT while the new
 # container's uvicorn tries to bind the same port, crash-looping on
 # "address already in use".
-CMD ["sh", "-c", "npx prisma migrate deploy && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "npx prisma migrate deploy && exec uvicorn main:app --host 0.0.0.0 --port ${HTTP_PORT:-8080}"]
