@@ -25,4 +25,11 @@ COPY . .
 # `prisma migrate deploy` applies any pending migrations against
 # DATABASE_URL before the app starts (Prisma's recommended deploy-time
 # migration step; see README.md "Database migrations").
-CMD ["sh", "-c", "npx prisma migrate deploy && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#
+# `exec` before uvicorn replaces the shell (PID 1) with the uvicorn
+# process itself, instead of leaving uvicorn as a child of `sh`. Without
+# it, a restart's SIGTERM goes to the shell, which doesn't forward it to
+# uvicorn — the old process lingers holding MQTT_PORT while the new
+# container's uvicorn tries to bind the same port, crash-looping on
+# "address already in use".
+CMD ["sh", "-c", "npx prisma migrate deploy && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
