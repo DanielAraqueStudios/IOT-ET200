@@ -1,12 +1,13 @@
 // Single source of truth for this small-scope gateway's settings.
 // Edit these values for your actual PLC/broker before running.
 //
-// MQTT broker: your own custom broker (Paint-mixer repo's api/broker.py),
+// MQTT broker: cloud/broker in this repo, deployed to Railway,
 // connected over TLS + device-token auth (defense in depth — TLS is on
-// top of the existing check_device_token auth, not a replacement for
-// it). The broker side needs its own TLS change (wrap the asyncio
-// server with an SSL context) before this will actually connect over
-// mqtts://; see README.md.
+// top of check_device_token auth, not a replacement for it). Set
+// MQTT_URL / MQTT_USERNAME / MQTT_DEVICE_TOKEN / MQTT_TLS_CA_FILE as
+// env vars on this gateway (see cloud/broker/README.md "Deploying to
+// Railway" for where MQTT_URL's host:port and the cert come from —
+// the TCP Proxy host:port, not the broker's own public HTTP domain).
 module.exports = {
   opcua: {
     endpointUrl: "opc.tcp://192.168.0.3:4840", // PLC's OPC UA server, plant-local

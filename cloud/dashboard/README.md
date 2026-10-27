@@ -60,7 +60,11 @@ export BROKER_DATABASE_URL="postgresql://broker:broker@localhost:5432/broker"
 # Broker cert is self-signed (not CA-issued) — point this at a saved
 # copy of that exact cert so paho trusts it specifically. Omitting it
 # falls back to no cert validation at all (logged as a warning) —
-# fine for a lab/POC, not for anything beyond that.
+# fine for a lab/POC, not for anything beyond that. This can be a file
+# path (as here, for local runs) OR the PEM content itself (what a
+# cloud host with no shared filesystem, e.g. Railway, needs) —
+# mqtt_ingest.py auto-detects which and writes content to a temp file
+# first if needed.
 export MQTT_TLS_CA_CERT="/path/to/broker-self-signed-cert.pem"
 # Optional overrides, default to the small_scope gateway's topics:
 export MQTT_OUTPUT_TOPIC="plant/small_scope/output/state"
@@ -162,11 +166,12 @@ deployments.
 - `BROKER_DATABASE_URL` — a second, separate Postgres connection
   string (the broker's dedicated DB, not this service's own
   `DATABASE_URL`), used only by `POST /api/admin/devices`.
-- `MQTT_TLS_CA_CERT` — path to the broker's self-signed cert PEM, so
-  the client trusts that specific cert instead of the public CA store
-  (which a self-signed cert will always fail against). Omitting it
-  disables cert validation entirely — logged as a warning, lab/POC
-  only.
+- `MQTT_TLS_CA_CERT` — the broker's self-signed cert PEM, so the
+  client trusts that specific cert instead of the public CA store
+  (which a self-signed cert will always fail against). Either a file
+  path or the PEM content itself (see "Running locally" above).
+  Omitting it disables cert validation entirely — logged as a warning,
+  lab/POC only.
 - `MQTT_OUTPUT_TOPIC` / `MQTT_INPUT_TOPIC` — override if the gateway's
   topic names change.
 - `JWT_SECRET` — signing secret for the dashboard REST API's JWTs.
@@ -265,12 +270,13 @@ scratch:
      `MQTT_TLS_CA_CERT` respectively (Railway's variable picker lets you
      pick "from Shared Variables" and map it to a service-local name —
      use `${{shared.MQTT_TLS_CERT_PEM}}` style references, or the
-     dashboard's point-and-click equivalent). `MQTT_TLS_CA_CERT` needs
-     this cert content reachable at a path inside the container — the
-     simplest interim option is a Railway **volume** mounted into the
-     backend service with the cert content written to it from the
-     shared variable at startup, since this repo doesn't yet decide a
-     permanent distribution mechanism (see "Not yet decided" below).
+     dashboard's point-and-click equivalent). No volume or file-mount
+     needed: `MQTT_TLS_CA_CERT` holds the cert's PEM content directly
+     (same value as the broker's own `MQTT_TLS_CERT`), and
+     `mqtt_ingest.py` detects that and writes it to a throwaway file
+     before `tls_set()` (which only accepts a path) — see
+     `cloud/broker/README.md` "TLS model" for the same pattern on the
+     broker side.
    - Still per-service on `dashboard-backend` (not shared — these are
      either per-client credentials or backend-only config): set
      `MQTT_OUTPUT_TOPIC`, `MQTT_INPUT_TOPIC`, `MQTT_USERNAME`,
@@ -306,7 +312,13 @@ scratch:
    not from a runtime env var — see `frontend/env.example`) and commit
    that change so the Dockerfile picks it up. The frontend's
    `nginx.conf.template` serves the built app on Railway's injected
-   `$PORT`; no extra variables are required for this service.
+   `$PORT`; no extra variables are required for this service (this one
+   has no TCP Proxy, so `$PORT` isn't ambiguous the way it is on
+   `cloud/broker` — see that service's README). `angular.json`'s build
+   options must declare `"polyfills": ["zone.js"]` — without it the
+   production bundle never loads `zone.js` (a listed dependency, but
+   not imported anywhere else) and every page load fails with
+   `NG0908: Angular requires Zone.js`, not just on Railway.
 
 7. **Deploy the frontend** the same way as step 5, then generate its
    own public domain from **Settings → Networking**. That's the URL
@@ -337,6 +349,5 @@ demo.
 
 ## Not yet decided / needs confirmation
 
-- Hosting target for backend + Postgres + frontend (not assumed here).
-- Where `MQTT_TLS_CA_CERT` gets fetched from / how it's distributed to
-  deployments (not just local dev) — not decided yet.
+- Hosting target for backend + Postgres + frontend: **decided — Railway**
+  (see "Deploying to Railway" above; this repo is live there).

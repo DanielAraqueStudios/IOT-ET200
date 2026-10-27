@@ -79,23 +79,32 @@ to reconstruct it from two files:
      already scopes it; combining both breaks the build context).
    - Add a Postgres plugin to this service only (its own
      `DATABASE_URL` — never shared with the dashboard).
-   - Set this service's own vars: `MQTT_PORT` (e.g. `8883`),
+   - Set this service's own vars: `MQTT_PORT` (e.g. `1883`),
+     `HTTP_PORT` (e.g. `8080` — **do not** leave uvicorn bound to
+     Railway's `$PORT`; on this service `$PORT` tracks the TCP Proxy's
+     port below, not the HTTP domain's, so uvicorn and the MQTT
+     listener would try to bind the same port in the same process and
+     crash-loop — see `cloud/broker/README.md` "Two distinct ports"),
      `MQTT_TLS_CERT`, `MQTT_TLS_KEY`. Generate the self-signed cert/key
-     locally first — use the TCP Proxy hostname from the step below as
-     the CN/SAN once you have it (a cert minted before that exists can
-     be regenerated after):
+     locally first with `scripts/generate_broker_cert.py` (pure
+     Python, works on Windows without `openssl`) — use the TCP Proxy
+     hostname from the step below as the CN/SAN once you have it (a
+     cert minted before that exists can be regenerated after):
      ```bash
-     openssl req -x509 -newkey rsa:2048 -nodes \
-       -keyout broker.key -out broker.crt \
-       -days 825 -subj "//CN=<tcp-proxy-host>" \
-       -addext "subjectAltName=DNS:<tcp-proxy-host>"
+     python scripts/generate_broker_cert.py --host <tcp-proxy-host>
      ```
-     Paste the full contents of `broker.crt` (including the
-     `BEGIN`/`END` lines) into `MQTT_TLS_CERT`, and `broker.key` into
-     `MQTT_TLS_KEY`.
-   - Deploy. Confirm `GET /health` on the Railway-assigned `$PORT`
+     It prints both files' full PEM content at the end — paste
+     `broker.crt`'s **exact full content, including the `BEGIN`/`END`
+     lines**, into `MQTT_TLS_CERT`, and `broker.key`'s into
+     `MQTT_TLS_KEY`. A partial/wrong paste here is the single most
+     common cause of a broker that crashes on boot with
+     `ssl.SSLError: [X509: KEY_VALUES_MISMATCH]` — verify a pasted pair
+     actually matches by comparing MD5 of each file's modulus
+     (`openssl x509 -noout -modulus -in broker.crt | openssl md5` must
+     equal `openssl rsa -noout -modulus -in broker.key | openssl md5`).
+   - Deploy. Confirm `GET /health` on `HTTP_PORT`'s public domain
      goes healthy (this is Railway's own deploy health check, separate
-     from the MQTT port).
+     from the MQTT port — and separate from `$PORT`, see above).
    - Settings → Networking → **TCP Proxy**, point it at `MQTT_PORT`.
      Railway returns a public `host:port` — this only exists after the
      service is deployed, it's not something you can set up front.
@@ -155,6 +164,7 @@ to reconstruct it from two files:
 |---|---|
 | `MQTT_URL` | `DATABASE_URL` (each service has its own) |
 | `MQTT_TLS_CERT_PEM` (→ `MQTT_TLS_CERT` on broker, `MQTT_TLS_CA_CERT` on backend) | `MQTT_TLS_KEY` (broker's private key — never shared) |
+| | `HTTP_PORT` (broker only — fixed, *not* Railway's `$PORT`; see `cloud/broker/README.md` "Two distinct ports") |
 | | `BROKER_DATABASE_URL` (backend → broker's Postgres, cross-service reference, not Shared Variables) |
 | | `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (per-client credentials) |
 | | `JWT_SECRET`, `DASHBOARD_ADMIN_USER`, `DASHBOARD_ADMIN_PASSWORD_HASH` |

@@ -22,9 +22,14 @@ here — this folder is purely the third piece they both talk to.
 ## TLS model
 
 `broker.py`'s `build_ssl_context()` reads `MQTT_TLS_CERT` /
-`MQTT_TLS_KEY` (PEM cert chain + private key paths) and serves
-`mqtts://` when both are set, falling back to plaintext `mqtt://` if
-either is unset (local/dev only).
+`MQTT_TLS_KEY` and serves `mqtts://` when both are set, falling back to
+plaintext `mqtt://` if either is unset (local/dev only). Each value is
+**either** a path to a PEM file (the local Docker stack mounts real
+files) **or** the PEM content itself, detected by the `-----BEGIN`
+prefix — a cloud host like Railway has no shared filesystem to point a
+variable at, so there the Railway dashboard's variable value holds the
+cert/key content directly, and `build_ssl_context()` writes it to a
+throwaway file before `load_cert_chain()` (which only accepts a path).
 
 The certificate is **self-signed and trusted manually by clients**,
 not CA-issued — this was an explicit decision and is not changed here.
@@ -220,41 +225,59 @@ Step by step, from scratch:
 3. **Set `MQTT_PORT`** (per-service, e.g. `1883`) and generate the
    broker's self-signed TLS cert/key pair, setting `MQTT_TLS_CERT` /
    `MQTT_TLS_KEY` as this service's own variables (`MQTT_TLS_KEY` must
-   stay broker-only, never shared — see below).
+   stay broker-only, never shared — see below). The cert's CN/SAN must
+   be the TCP Proxy hostname from step 5 (e.g.
+   `viaduct.proxy.rlwy.net`), not `localhost` — a cert minted before
+   that hostname exists can be regenerated once it is known.
 
-   Generate the pair locally with `openssl` — this is the same
-   invocation used for this repo's own local smoke test
-   (`CN=localhost`; RSA 2048; the smoke test used `-days 1` since it's
-   throwaway, use a longer validity like `-days 365` for anything
-   beyond a quick local check):
+   **Generate the pair** with `scripts/generate_broker_cert.py` — pure
+   Python (the `cryptography` package), so it works on Windows without
+   `openssl` on PATH. It normalizes common copy-paste mistakes (a
+   `mqtts://` scheme prefix, a trailing `:port`, a trailing slash) out
+   of the host you give it, and writes the pair to `scripts/.broker-
+   cert/` (gitignored):
+
+   ```bash
+   python scripts/generate_broker_cert.py --host viaduct.proxy.rlwy.net
+   # On Windows PowerShell, running the .py file directly via `&` opens
+   # it by file association instead of executing it — use the wrapper:
+   # & 'scripts\generate_broker_cert.ps1' --host viaduct.proxy.rlwy.net
+   ```
+
+   It prints both files' full PEM content at the end, ready to paste
+   directly into Railway's variable fields — **paste the exact block
+   including the `BEGIN`/`END` lines**; a partial paste (e.g. only the
+   start of a PowerShell command line pasted by mistake) produces a
+   broker that crashes with `ssl.SSLError: [X509: KEY_VALUES_MISMATCH]`
+   on boot if the cert and key end up from two different generation
+   runs — verify a live pair matches by comparing MD5 of their modulus:
+   `openssl x509 -noout -modulus -in broker.crt | openssl md5` must
+   equal `openssl rsa -noout -modulus -in broker.key | openssl md5`.
+
+   If `openssl` is available (e.g. Git Bash on Windows, or any
+   Linux/macOS shell), the equivalent one-liner also works:
 
    ```bash
    openssl req -x509 -newkey rsa:2048 -nodes \
      -keyout broker.key -out broker.crt \
-     -days 365 -subj "/CN=localhost"
+     -days 365 -subj "/CN=viaduct.proxy.rlwy.net" \
+     -addext "subjectAltName=DNS:viaduct.proxy.rlwy.net"
    ```
 
-   This writes `broker.crt` (the cert — goes in `MQTT_TLS_CERT` here,
-   and in `MQTT_TLS_CA_CERT` on the dashboard side) and `broker.key`
-   (the private key — `MQTT_TLS_KEY` here only, never shared). To read
-   their contents for pasting into Railway:
+   Either way, `broker.crt` goes in `MQTT_TLS_CERT` here (and in
+   `MQTT_TLS_CA_CERT` on the dashboard side), `broker.key` goes in
+   `MQTT_TLS_KEY` here only, never shared. Paste each file's **full
+   contents** (not a path) into Railway's variable value — see "TLS
+   model" above for why a path doesn't work on Railway.
 
-   ```bash
-   cat broker.crt   # -> paste as the shared cert variable's value
-   cat broker.key   # -> paste as this service's MQTT_TLS_KEY only
-   ```
-
-   **What this automates and what it doesn't:** the two commands above
-   — generating the files and printing their contents — are the only
-   parts of this step that can be scripted/copy-pasted. Actually
-   entering those values into Railway's project-level Shared Variables
-   or a service's own env vars, signing in to the Railway account
-   (OAuth/`railway login`), and provisioning the Postgres plugin in
-   step 2 all require a human acting in the Railway dashboard or an
-   already-authenticated `railway` CLI session — none of that can be
-   done by running a local command. Generate and read the cert/key
-   locally, then switch to the Railway dashboard (or an authenticated
-   CLI session) to paste the values in.
+   **What this automates and what it doesn't:** generating the files
+   and printing their contents can be scripted/copy-pasted as above.
+   Actually entering those values into Railway's project-level Shared
+   Variables or a service's own env vars, signing in to the Railway
+   account (OAuth/`railway login`), and provisioning the Postgres
+   plugin in step 2 all require a human acting in the Railway dashboard
+   or an already-authenticated `railway` CLI session — none of that can
+   be done by running a local command.
 
 4. **Deploy** — push to the linked branch or `railway up` from this
    folder. Railway's health check hits `GET /health` on `$PORT`
@@ -280,27 +303,42 @@ Step by step, from scratch:
    token issuance" above) before any client, dashboard backend's own
    MQTT ingest included, can authenticate.
 
-Two distinct ports are involved in this service once deployed:
+Two distinct ports are involved in this service once deployed, and
+**neither of them is Railway's injected `$PORT`**:
 
-- **`$PORT`** (Railway-injected, HTTP) — serves only `GET /health`,
-  used for Railway's deploy health check. Not the MQTT port.
-- **`MQTT_PORT`** (set via env var, default `1883`) — the actual MQTT
-  listener. Railway's HTTP `$PORT`/public domain do **not** expose
-  raw TCP, so this port needs its own **Railway TCP Proxy**: from the
-  Railway dashboard, open this service's Settings → Networking → TCP
-  Proxy, and point it at `MQTT_PORT`. Railway then hands back a proxy
-  `host:port` pair — that's the address clients (`MQTT_URL` on the
-  dashboard side, the edge gateway) actually connect to, not
-  `$PORT`/the public HTTP domain.
+- **`HTTP_PORT`** (env var, default `8080`) — what uvicorn itself
+  binds, serving only `GET /health` for Railway's deploy health check.
+  Must match Settings → Networking → Public Networking → Target port.
+- **`MQTT_PORT`** (env var, default `1883`) — the actual MQTT
+  listener, a plain `asyncio` TCP server in the same process. Needs
+  its own **Railway TCP Proxy** (Settings → Networking → TCP Proxy,
+  pointed at `MQTT_PORT`) since Railway's HTTP domain doesn't expose
+  raw TCP. Railway hands back a proxy `host:port` pair — that's the
+  address clients (`MQTT_URL` on the dashboard side, the edge gateway)
+  actually connect to.
+
+**Why not just use Railway's `$PORT`?** On a service that has *both* a
+public HTTP domain and a TCP Proxy, Railway's injected `$PORT` tracks
+the TCP Proxy's target port (here, `MQTT_PORT`'s value), not the HTTP
+domain's. Binding uvicorn to `$PORT` made it try to bind the exact same
+port as the MQTT listener in the same process — uvicorn would crash
+immediately after `Application startup complete`, Railway's restart
+policy would spin the container back up, and it would crash again,
+every few seconds, forever. `HTTP_PORT` is a separate, fixed env var
+specifically to avoid this — don't switch uvicorn back to `$PORT`.
 
 Required env vars (see `env.example`):
 
 - `DATABASE_URL` — this service's own dedicated Postgres plugin
   (see "Database: dedicated, not shared" above). Service-specific,
   not a Railway Shared Variable.
+- `HTTP_PORT` — port uvicorn's own HTTP server binds to (default
+  `8080`). See "Two distinct ports" above for why this exists instead
+  of using Railway's `$PORT`.
 - `MQTT_PORT` — port the MQTT listener binds to internally.
 - `MQTT_TLS_CERT` / `MQTT_TLS_KEY` — self-signed cert + key for
-  `mqtts://`. Once deployed, fetch this cert (or its fingerprint) so
+  `mqtts://`, either a file path or the PEM content itself (see "TLS
+  model" above). Once deployed, fetch this cert (or its fingerprint) so
   it can be pinned on the client side (`MQTT_TLS_CA_CERT` for the
   dashboard backend) — do not fabricate or assume a value.
 - `MQTT_TOPIC_PREFIX` / `MQTT_COMMAND_SUFFIX` — optional, default
@@ -316,9 +354,10 @@ actually comes from when deploying this service to Railway:
 | Var | Scope | Where the value comes from |
 |---|---|---|
 | `DATABASE_URL` | per-service | Auto-populated by referencing this service's own Postgres plugin (step 2) — don't hand-type it. |
+| `HTTP_PORT` | per-service | Your own choice (default `8080`); must match Settings → Networking → Public Networking → Target port. Not `$PORT` — see "Two distinct ports" above. |
 | `MQTT_PORT` | per-service | Your own choice (e.g. `1883`); must match what you point the TCP Proxy at in step 5. |
-| `MQTT_TLS_CERT` | per-service here, **same content** as the shared cert | Output of `openssl req ...` above (`broker.crt`), pasted in directly. |
-| `MQTT_TLS_KEY` | per-service, never shared | Output of `openssl req ...` above (`broker.key`) — broker-only. |
+| `MQTT_TLS_CERT` | per-service here, **same content** as the shared cert | Output of `scripts/generate_broker_cert.py` (`broker.crt`), pasted in as its full PEM content. |
+| `MQTT_TLS_KEY` | per-service, never shared | Output of `scripts/generate_broker_cert.py` (`broker.key`) — broker-only, full PEM content. |
 | `MQTT_URL` (dashboard-side) | shared | Built from the TCP Proxy `host:port` Railway returns in step 5 (`mqtts://host:port`); published as a project Shared Variable in step 6. |
 | `MQTT_TLS_CA_CERT` (dashboard-side) | shared, same content as `MQTT_TLS_CERT` | Same `broker.crt` content from above, published as a project Shared Variable in step 6. |
 | `MQTT_USERNAME` / `MQTT_DEVICE_TOKEN` (dashboard-side) | per-service, per-client | Returned by `POST /api/admin/devices` (step 7 — see "Device token issuance"); `BROKER_DATABASE_URL` on the dashboard backend is what lets that endpoint write into this service's `User` table. |
