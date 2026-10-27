@@ -17,6 +17,11 @@ import { AuthService } from "./auth.service";
     </p>
     <form (ngSubmit)="submit()">
       <input [(ngModel)]="email" name="email" type="email" placeholder="device email" required />
+      <label>
+        <input [(ngModel)]="canCommand" name="canCommand" type="checkbox" />
+        Allow this device to send commands (publish to a
+        <code>/command</code> topic), not just telemetry
+      </label>
       <button type="submit" [disabled]="submitting">Issue token</button>
     </form>
     <p *ngIf="error" class="error">{{ error }}</p>
@@ -24,13 +29,16 @@ import { AuthService } from "./auth.service";
       <p><strong>Device token (shown once — copy it now):</strong></p>
       <code>{{ issuedToken }}</code>
       <button type="button" (click)="copyToken()">{{ copied ? "Copied!" : "Copy" }}</button>
+      <p>Command permission: <strong>{{ issuedCanCommand ? "allowed" : "telemetry only" }}</strong></p>
     </div>
   `,
 })
 export class AdminDeviceComponent {
   email = "";
+  canCommand = false;
   error = "";
   issuedToken = "";
+  issuedCanCommand = false;
   copied = false;
   submitting = false;
 
@@ -48,13 +56,14 @@ export class AdminDeviceComponent {
           "Content-Type": "application/json",
           ...this.auth.authHeader(),
         },
-        body: JSON.stringify({ email: this.email }),
+        body: JSON.stringify({ email: this.email, can_command: this.canCommand }),
       });
       if (!res.ok) {
         throw new Error(`Request failed (${res.status})`);
       }
       const data = await res.json();
       this.issuedToken = data.device_token;
+      this.issuedCanCommand = data.can_command;
     } catch (e) {
       this.error = "Could not issue a device token";
     } finally {
