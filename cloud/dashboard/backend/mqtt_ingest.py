@@ -20,6 +20,7 @@ instead of the public CA trust store (which a self-signed cert will
 always fail).
 """
 import os
+import tempfile
 
 import paho.mqtt.client as mqtt
 from sqlalchemy.orm import Session
@@ -29,7 +30,7 @@ from models import engine, PlcState
 MQTT_URL = os.environ["MQTT_URL"]  # e.g. mqtts://your-app.up.railway.app:1884
 MQTT_USERNAME = os.environ["MQTT_USERNAME"]  # account email registered with the broker
 MQTT_DEVICE_TOKEN = os.environ["MQTT_DEVICE_TOKEN"]  # from GET /api/auth/device-token
-MQTT_TLS_CA_CERT = os.environ.get("MQTT_TLS_CA_CERT")  # path to the broker's self-signed cert PEM
+MQTT_TLS_CA_CERT = os.environ.get("MQTT_TLS_CA_CERT")  # path to the broker's self-signed cert PEM, OR the PEM content itself
 TOPICS = [
     os.environ.get("MQTT_OUTPUT_TOPIC", "plant/small_scope/output/state"),
     os.environ.get("MQTT_INPUT_TOPIC", "plant/small_scope/input/state"),
@@ -66,8 +67,17 @@ def start():
     if MQTT_TLS_CA_CERT:
         # Pin the broker's own self-signed cert as the trust anchor,
         # since it isn't CA-issued and the public trust store will
-        # always reject it.
-        client.tls_set(ca_certs=MQTT_TLS_CA_CERT)
+        # always reject it. paho's tls_set only accepts a file path —
+        # on a cloud host with no shared filesystem (e.g. Railway),
+        # MQTT_TLS_CA_CERT holds the PEM content itself (same Shared
+        # Variable the broker loads as MQTT_TLS_CERT), so write it to
+        # a throwaway file first.
+        ca_cert_path = MQTT_TLS_CA_CERT
+        if MQTT_TLS_CA_CERT.lstrip().startswith("-----BEGIN"):
+            fd, ca_cert_path = tempfile.mkstemp(suffix=".crt")
+            with os.fdopen(fd, "w") as f:
+                f.write(MQTT_TLS_CA_CERT)
+        client.tls_set(ca_certs=ca_cert_path)
     else:
         print("[mqtt_ingest] WARNING: MQTT_TLS_CA_CERT not set — "
               "falling back to no certificate validation (insecure, "
