@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "IOT-ET200: Local stack up (seed token)",
+      "type": "shell",
+      "command": "python",
+      "args": ["scripts/run_local_stack.py", "up", "--seed-token"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "iot-et200-stack"
+      }
+    },
+    {
+      "label": "IOT-ET200: Local stack down",
+      "type": "shell",
+      "command": "python",
+      "args": ["scripts/run_local_stack.py", "down"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "iot-et200-stack"
+      }
+    },
+    {
+      "label": "IOT-ET200: MQTT smoke test (local stack)",
+      "type": "shell",
+      "command": "python",
+      "args": ["scripts/run_smoke_test_local.py"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "iot-et200-stack"
+      }
+    }
+  ]
+}
