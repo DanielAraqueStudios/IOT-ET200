@@ -17,7 +17,11 @@ model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
   passwordHash String
+  // Bcrypt hash of the device token, never the plaintext value.
   deviceToken  String?
+  // Topic ACL: only true for identities allowed to PUBLISH to a
+  // "/command" topic (see cloud/broker/broker.py).
+  canCommand   Boolean  @default(false)
   createdAt    DateTime @default(now())
 
   @@map("User")

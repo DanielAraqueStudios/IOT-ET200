@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, func
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, func
 from sqlalchemy.orm import DeclarativeBase
 import os
 from dotenv import load_dotenv
@@ -23,5 +23,10 @@ class User(Base):
     id           = Column(Integer, primary_key=True, autoincrement=True)
     email        = Column(String,  unique=True, nullable=False)
     passwordHash = Column(String,  nullable=False)
+    # Bcrypt hash of the device token (never the plaintext token itself —
+    # see auth.py:check_device_token, which verifies against this hash).
     deviceToken  = Column(String,  nullable=True)
+    # Topic-ACL flag: only identities with canCommand=True may PUBLISH to
+    # topics ending in "/command" (see broker.py's SUBSCRIBE/PUBLISH ACL).
+    canCommand   = Column(Boolean, nullable=False, default=False)
     createdAt    = Column(DateTime, default=func.now())
