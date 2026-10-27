@@ -4,6 +4,7 @@ import { environment } from "./environment";
 import { AuthService } from "./auth.service";
 import { LoginComponent } from "./login.component";
 import { AdminDeviceComponent } from "./admin-device.component";
+import { DeviceListComponent } from "./device-list.component";
 import { SystemStatusComponent } from "./system-status.component";
 
 interface TagState {
@@ -15,7 +16,7 @@ interface TagState {
 @Component({
   selector: "app-dashboard",
   standalone: true,
-  imports: [CommonModule, LoginComponent, AdminDeviceComponent, SystemStatusComponent],
+  imports: [CommonModule, LoginComponent, AdminDeviceComponent, DeviceListComponent, SystemStatusComponent],
   template: `
     <app-system-status></app-system-status>
     <app-login *ngIf="!loggedIn" (loggedIn)="onLoggedIn()"></app-login>
@@ -34,6 +35,7 @@ interface TagState {
         </table>
       </div>
       <app-admin-device></app-admin-device>
+      <app-device-list></app-device-list>
     </ng-container>
   `,
 })

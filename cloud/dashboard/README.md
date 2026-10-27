@@ -140,10 +140,16 @@ the tag table once logged in) does the same thing — with a checkbox
 for `can_command` and a copy button — for anyone who'd rather not use
 `curl`.
 
-**Not built** (flagged as out of scope for this task, not solved
-here): revoking a token without issuing a new one, listing existing
-devices, or any UI/endpoint to see which devices currently hold a
-token.
+`GET /api/admin/devices` lists every issued device (email,
+`can_command`, `enabled`, `createdAt`) without ever returning
+`deviceToken` or its hash — that stays write-once by design.
+`PATCH /api/admin/devices/{email}` with `{"enabled": true|false}`
+flips a device's access on or off in place (404s if the email has no
+device entry); it does not touch or require a token, so a disabled
+device's existing token works again the moment it's re-enabled — no
+rotation needed. The frontend's `device-list.component.ts` (shown
+under the issuance form) renders this list with an Enable/Disable
+button per device.
 
 ### Frontend
 

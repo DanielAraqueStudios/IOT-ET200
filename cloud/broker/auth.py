@@ -21,7 +21,14 @@ def check_device_token(email: str, token: str) -> "dict | None":
         with Session(engine) as s:
             u = s.query(User).filter_by(email=email).first()
             stored = u.deviceToken if u else None
-            ok = u is not None and stored is not None and pwd_context.verify(token, stored)
+            # A disabled device fails the same way as a wrong token: no
+            # separate error path that would leak enabled-vs-nonexistent.
+            ok = (
+                u is not None
+                and bool(u.enabled)
+                and stored is not None
+                and pwd_context.verify(token, stored)
+            )
             print(f"[AUTH] email={email!r} found={u is not None} token_match={ok}")
             if not ok:
                 return None
