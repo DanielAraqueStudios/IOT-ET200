@@ -9,13 +9,19 @@ import { AuthService } from "./auth.service";
   imports: [CommonModule, FormsModule],
   template: `
     <h1>PLC Dashboard Login</h1>
-    <form (ngSubmit)="submit()">
-      <input [(ngModel)]="username" name="username" placeholder="Username" required />
-      <input [(ngModel)]="password" name="password" type="password" placeholder="Password" required />
-      <button type="submit">Log in</button>
-    </form>
-    <p *ngIf="error">{{ error }}</p>
+    <div class="card login-card">
+      <form (ngSubmit)="submit()">
+        <input [(ngModel)]="username" name="username" placeholder="Username" required />
+        <input [(ngModel)]="password" name="password" type="password" placeholder="Password" required />
+        <button type="submit">Log in</button>
+      </form>
+      <p class="error" *ngIf="error">{{ error }}</p>
+    </div>
   `,
+  styles: [`
+    .login-card { max-width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+    form { display: flex; flex-direction: column; gap: 0.75rem; }
+  `],
 })
 export class LoginComponent {
   @Output() loggedIn = new EventEmitter<void>();

@@ -27,6 +27,16 @@ from sqlalchemy.orm import Session
 
 from models import engine, PlcState
 
+# Tracks this backend's own MQTT connection state (set by the on_connect/
+# on_disconnect callbacks below) — reported by GET /api/health as the
+# "broker" signal, since it reflects whether *this backend* can actually
+# reach the broker, not just whether the broker process is up.
+_connected = False
+
+
+def is_connected() -> bool:
+    return _connected
+
 MQTT_URL = os.environ["MQTT_URL"]  # e.g. mqtts://your-app.up.railway.app:1884
 MQTT_USERNAME = os.environ["MQTT_USERNAME"]  # account email registered with the broker
 MQTT_DEVICE_TOKEN = os.environ["MQTT_DEVICE_TOKEN"]  # from GET /api/auth/device-token
@@ -45,10 +55,18 @@ def _parse_url(url: str):
 
 
 def _on_connect(client, userdata, flags, rc):
+    global _connected
+    _connected = rc == 0
     print(f"[mqtt_ingest] connected, rc={rc}")
     for topic in TOPICS:
         client.subscribe(topic)
         print(f"[mqtt_ingest] subscribed: {topic}")
+
+
+def _on_disconnect(client, userdata, rc):
+    global _connected
+    _connected = False
+    print(f"[mqtt_ingest] disconnected, rc={rc}")
 
 
 def _on_message(client, userdata, msg):
@@ -86,6 +104,7 @@ def start():
         client.tls_set()
         client.tls_insecure_set(True)
     client.on_connect = _on_connect
+    client.on_disconnect = _on_disconnect
     client.on_message = _on_message
     client.connect(host, port, keepalive=60)
     client.loop_start()

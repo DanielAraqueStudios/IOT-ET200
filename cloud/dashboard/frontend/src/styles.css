@@ -1,15 +1,141 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #09090b;
+  color: #e4e4e7;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
 body {
-  font-family: system-ui, sans-serif;
-  margin: 2rem;
+  padding: 2rem;
+}
+
+h1, h2 {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #f4f4f5;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+}
+
+p {
+  color: #a1a1aa;
+  font-size: 0.875rem;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85em;
+  color: #e4e4e7;
 }
 
 table {
   border-collapse: collapse;
+  width: 100%;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-th,
-td {
-  border: 1px solid #ccc;
-  padding: 0.4rem 0.8rem;
+th, td {
+  padding: 0.6rem 1rem;
   text-align: left;
+  font-size: 0.875rem;
+}
+
+th {
+  background: #18181b;
+  color: #71717a;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+  border-bottom: 1px solid #27272a;
+}
+
+td {
+  border-bottom: 1px solid #18181b;
+  color: #e4e4e7;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+input, button {
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  color: #f4f4f5;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus {
+  border-color: #60a5fa;
+}
+
+button {
+  background: #27272a;
+  color: #f4f4f5;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: #3f3f46;
+  border-color: #52525b;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button[type="submit"] {
+  background: #2563eb;
+  border-color: #3b82f6;
+}
+
+button[type="submit"]:hover:not(:disabled) {
+  background: #3b82f6;
+}
+
+.error {
+  color: #f87171;
+}
+
+.card {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
 }

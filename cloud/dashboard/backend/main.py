@@ -1,5 +1,6 @@
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +47,23 @@ def login(body: LoginRequest):
     if not verify_credentials(body.username, body.password):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     return LoginResponse(access_token=create_access_token(body.username))
+
+
+@app.get("/api/health")
+def health():
+    """Unauthenticated status check for the frontend's corner widget.
+    "broker" reflects this backend's own MQTT connection state (see
+    mqtt_ingest.is_connected) rather than an independent HTTP check
+    against the broker, since that's a more honest signal — two
+    services that are each "up" but can't talk to each other is the
+    failure mode this is meant to catch."""
+    mqtt_connected = mqtt_ingest.is_connected()
+    return {
+        "backend": "up",
+        "broker": "up" if mqtt_connected else "down",
+        "mqtt_connected": mqtt_connected,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/state")

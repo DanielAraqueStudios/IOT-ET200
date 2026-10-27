@@ -10,28 +10,35 @@ import { AuthService } from "./auth.service";
   imports: [CommonModule, FormsModule],
   template: `
     <h2>Issue device token</h2>
-    <p>
-      For a device (e.g. the IOT2050 gateway) to authenticate to the MQTT
-      broker. Copy the token into <code>edge/small_scope/config.js</code>'s
-      <code>mqtt.deviceToken</code> — it is shown here only once.
-    </p>
-    <form (ngSubmit)="submit()">
-      <input [(ngModel)]="email" name="email" type="email" placeholder="device email" required />
-      <label>
-        <input [(ngModel)]="canCommand" name="canCommand" type="checkbox" />
-        Allow this device to send commands (publish to a
-        <code>/command</code> topic), not just telemetry
-      </label>
-      <button type="submit" [disabled]="submitting">Issue token</button>
-    </form>
-    <p *ngIf="error" class="error">{{ error }}</p>
-    <div *ngIf="issuedToken" class="issued-token">
-      <p><strong>Device token (shown once — copy it now):</strong></p>
-      <code>{{ issuedToken }}</code>
-      <button type="button" (click)="copyToken()">{{ copied ? "Copied!" : "Copy" }}</button>
-      <p>Command permission: <strong>{{ issuedCanCommand ? "allowed" : "telemetry only" }}</strong></p>
+    <div class="card">
+      <p>
+        For a device (e.g. the IOT2050 gateway) to authenticate to the MQTT
+        broker. Copy the token into <code>edge/small_scope/config.js</code>'s
+        <code>mqtt.deviceToken</code> — it is shown here only once.
+      </p>
+      <form (ngSubmit)="submit()">
+        <input [(ngModel)]="email" name="email" type="email" placeholder="device email" required />
+        <label class="checkbox-row">
+          <input [(ngModel)]="canCommand" name="canCommand" type="checkbox" />
+          Allow this device to send commands (publish to a
+          <code>/command</code> topic), not just telemetry
+        </label>
+        <button type="submit" [disabled]="submitting">Issue token</button>
+      </form>
+      <p *ngIf="error" class="error">{{ error }}</p>
+      <div *ngIf="issuedToken" class="issued-token">
+        <p><strong>Device token (shown once — copy it now):</strong></p>
+        <code>{{ issuedToken }}</code>
+        <button type="button" (click)="copyToken()">{{ copied ? "Copied!" : "Copy" }}</button>
+        <p>Command permission: <strong>{{ issuedCanCommand ? "allowed" : "telemetry only" }}</strong></p>
+      </div>
     </div>
   `,
+  styles: [`
+    form { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.75rem; align-items: flex-start; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.5rem; color: #a1a1aa; font-size: 0.8rem; }
+    .issued-token { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+  `],
 })
 export class AdminDeviceComponent {
   email = "";

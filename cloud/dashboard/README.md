@@ -17,7 +17,9 @@ control/write-back UI, no HMI** — display only, by design. This is the
   `plant/small_scope/input/state`, and writes every message into
   `plc_state`. `main.py` exposes read-only REST endpoints
   (`GET /api/state`, `GET /api/history/{tag_name}`), protected by the
-  JWT auth in `auth.py`, plus one write endpoint:
+  JWT auth in `auth.py`, plus an unauthenticated `GET /api/health`
+  (backend liveness + MQTT ingest connection state, for the frontend's
+  status widget) and one write endpoint:
   `POST /api/admin/devices` (also JWT-protected), which issues MQTT
   device tokens — see "Device token issuance" below. This is the one
   intentional exception to "no write endpoints" in this folder: it
@@ -25,8 +27,10 @@ control/write-back UI, no HMI** — display only, by design. This is the
   touch the PLC/gateway data path at all.
 - `frontend/` — minimal Angular app that polls `GET /api/state` and
   renders current tag values, plus an admin form
-  (`admin-device.component.ts`) to issue a device token. No write
-  endpoints affecting PLC/gateway data exist anywhere in this repo.
+  (`admin-device.component.ts`) to issue a device token, and a
+  system-status widget (`system-status.component.ts`) that polls
+  `GET /api/health`. No write endpoints affecting PLC/gateway data
+  exist anywhere in this repo.
 
 ## Running locally
 
@@ -179,6 +183,20 @@ deployments.
 - `DASHBOARD_ADMIN_USER` / `DASHBOARD_ADMIN_PASSWORD_HASH` — the
   single admin login accepted by `POST /auth/login` (bcrypt hash, not
   a plaintext password).
+
+## System status widget
+
+`GET /api/health` (unauthenticated) returns
+`{"backend": "up", "broker": "up"|"down", "mqtt_connected": bool, "checked_at": "<iso timestamp>"}`.
+`broker`/`mqtt_connected` reflect whether **this backend's own**
+`mqtt_ingest` connection is currently up (tracked via paho's
+`on_connect`/`on_disconnect` callbacks in `mqtt_ingest.py`,
+`is_connected()`) rather than an independent HTTP check against the
+broker's own `/health` — two services that are each "up" but can't
+talk to each other is exactly the failure mode this is meant to catch.
+The Angular frontend's `app-system-status` widget (shown on every
+view, top-right) polls this endpoint every 20s and keeps the last ~20
+results as an in-memory client-side log.
 
 ## Auth
 
