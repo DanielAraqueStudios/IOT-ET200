@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# Unbuffered stdout: print()'d log lines (ours and asyncio's) would
+# otherwise sit in Python's block buffer — since stdout isn't a TTY here —
+# and flush out of order relative to uvicorn's own logging-module output,
+# making the deploy log timeline misleading when diagnosing crashes.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Node.js is needed only to run the Prisma CLI for migrations — the
