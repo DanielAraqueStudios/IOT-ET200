@@ -57,13 +57,26 @@ def _read_str(buf: bytes, pos: int):
 
 # ── Broker ────────────────────────────────────────────────────────────────────
 
+#  Topic ACL: every topic a client may touch must fall under this prefix,
+#  and only identities with can_command=True may PUBLISH to a topic
+#  ending in COMMAND_SUFFIX (e.g. plant/small_scope/output/command).
+#  Override via env for other deployments; defaults match this repo's
+#  only known topics (see edge/small_scope/config.js).
+TOPIC_PREFIX    = os.environ.get("MQTT_TOPIC_PREFIX", "plant/")
+COMMAND_SUFFIX  = os.environ.get("MQTT_COMMAND_SUFFIX", "/command")
+
+
 class MqttBroker:
     def __init__(self):
         # topic -> set of StreamWriter
         self._subs: dict[str, set] = defaultdict(set)
+        # writer -> identity dict ({"email", "can_command"}) set on CONNECT
+        self._identities: dict = {}
         # called with (topic: str, payload: bytes) on every inbound PUBLISH
         self.on_message = None
-        # called with (username: str, password: str) -> bool on CONNECT; None = allow all
+        # called with (username: str, password: str) -> dict | None on
+        # CONNECT. Returns an identity dict on success, None to reject.
+        # None callback = allow all (identity defaults to can_command=True).
         self.auth_callback = None
 
     # ── Internal publish (to all subscribers) ─────────────────────────────────
@@ -91,6 +104,16 @@ class MqttBroker:
         if isinstance(payload, str):
             payload = payload.encode()
         await self._forward(topic, payload)
+
+    # ── Topic ACL ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _publish_allowed(topic: str, identity: dict) -> bool:
+        if not topic.startswith(TOPIC_PREFIX):
+            return False
+        if topic.endswith(COMMAND_SUFFIX):
+            return bool(identity.get("can_command"))
+        return True
 
     # ── Per-client handler ─────────────────────────────────────────────────────
 
@@ -125,12 +148,21 @@ class MqttBroker:
                         l = struct.unpack_from("!H", body, pos)[0]; pos += 2
                         password = body[pos:pos+l].decode(errors="replace"); pos += l
                     rc = 0x00
-                    if self.auth_callback and not self.auth_callback(username or "", password or ""):
-                        rc = 0x04  # bad credentials
+                    identity = {"email": username or "", "can_command": True}
+                    if self.auth_callback:
+                        # auth_callback does blocking DB I/O — run off the
+                        # event loop so one slow CONNECT can't stall every
+                        # other client's PUBLISH/PINGREQ handling.
+                        result = await asyncio.to_thread(self.auth_callback, username or "", password or "")
+                        if result is None:
+                            rc = 0x04  # bad credentials
+                        else:
+                            identity = result
                     writer.write(bytes([0x20, 0x02, 0x00, rc]))
                     await writer.drain()
                     if rc != 0:
                         return
+                    self._identities[writer] = identity
 
                 elif ptype == PUBLISH:
                     topic, pos = _read_str(body, 0)
@@ -141,19 +173,28 @@ class MqttBroker:
                         writer.write(bytes([0x40, 0x02]) + struct.pack("!H", pid))  # PUBACK
                         await writer.drain()
                     msg = body[pos:]
-                    await self._forward(topic, msg, exclude=writer)
-                    if self.on_message:
-                        asyncio.create_task(self.on_message(topic, msg))
+                    identity = self._identities.get(writer, {})
+                    if self._publish_allowed(topic, identity):
+                        await self._forward(topic, msg, exclude=writer)
+                        if self.on_message:
+                            asyncio.create_task(self.on_message(topic, msg))
+                    else:
+                        print(f"[ACL] denied PUBLISH {topic!r} from {identity.get('email')!r}")
 
                 elif ptype == SUBSCRIBE:
                     pid = struct.unpack_from("!H", body, 0)[0]
+                    identity = self._identities.get(writer, {})
                     pos, granted = 2, []
                     while pos < len(body):
                         t, pos  = _read_str(body, pos)
                         qos_req = body[pos]; pos += 1
-                        self._subs[t].add(writer)
-                        my_topics.add(t)
-                        granted.append(min(qos_req, 1))
+                        if t.startswith(TOPIC_PREFIX):
+                            self._subs[t].add(writer)
+                            my_topics.add(t)
+                            granted.append(min(qos_req, 1))
+                        else:
+                            print(f"[ACL] denied SUBSCRIBE {t!r} from {identity.get('email')!r}")
+                            granted.append(0x80)  # failure (outside allowed topic namespace)
                     suback = bytes([0x90]) + _encode_varlen(2 + len(granted))
                     writer.write(suback + struct.pack("!H", pid) + bytes(granted))
                     await writer.drain()
@@ -170,6 +211,7 @@ class MqttBroker:
         finally:
             for t in my_topics:
                 self._subs[t].discard(writer)
+            self._identities.pop(writer, None)
             try:
                 writer.close()
             except Exception:
