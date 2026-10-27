@@ -104,23 +104,33 @@ migrations for that table (`cloud/broker`'s Prisma migrations do).
 curl -X POST http://localhost:8000/api/admin/devices \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email": "iot2050-gateway@example.com"}'
-# -> {"email": "iot2050-gateway@example.com", "device_token": "..."}
+  -d '{"email": "iot2050-gateway@example.com", "can_command": false}'
+# -> {"email": "iot2050-gateway@example.com", "device_token": "...", "can_command": false}
 ```
 
 The token is generated with `secrets.token_urlsafe(32)` (not a
-predictable value) and is **returned exactly once**, in that API
-response — there is no way to retrieve it again afterward, matching
-how `check_device_token` only ever compares it, never displays it.
-Copy it immediately into `edge/small_scope/config.js`'s
-`mqtt.deviceToken` (or wherever else that device's MQTT client reads
-its credentials from). Calling the endpoint again for the same email
-re-issues (overwrites) that device's token — the old one stops
-working immediately.
+predictable value), **hashed with bcrypt before being stored** (only
+the hash goes into the broker's `User.deviceToken` — see
+`cloud/broker/README.md` "Auth model"), and is **returned exactly
+once**, in that API response — there is no way to retrieve it again
+afterward; even this backend only ever holds the plaintext token for
+the duration of this one request. Copy it immediately into
+`edge/small_scope/config.js`'s `mqtt.deviceToken` (or wherever else
+that device's MQTT client reads its credentials from). Calling the
+endpoint again for the same email re-issues (overwrites) that
+device's token — the old one stops working immediately.
+
+`can_command` controls the broker's topic ACL (see
+`cloud/broker/README.md` "Topic ACL"): only set it `true` for a
+device/client that legitimately needs to PUBLISH to a `/command`
+topic — not just subscribe to one, and not for telemetry-only
+publishers like the gateway's status topics. It defaults to `false`
+if omitted.
 
 The frontend's admin form (`admin-device.component.ts`, shown below
-the tag table once logged in) does the same thing with a copy button,
-for anyone who'd rather not use `curl`.
+the tag table once logged in) does the same thing — with a checkbox
+for `can_command` and a copy button — for anyone who'd rather not use
+`curl`.
 
 **Not built** (flagged as out of scope for this task, not solved
 here): revoking a token without issuing a new one, listing existing
@@ -203,9 +213,19 @@ scratch:
 
 2. **Add the backend service.**
    - **New Service** → **GitHub Repo**, pick this repo.
-   - Set the service's **Root Directory** to `cloud/dashboard` and
-     **Dockerfile Path** to `backend/Dockerfile` (Settings → Build).
-     Rename the service to `dashboard-backend` to match `railway.toml`.
+   - Set the service's **Root Directory** to `cloud/dashboard/backend`
+     (Settings → Source) — type it or pick `backend` from the folder
+     picker. Then, in the same Settings page under **Build**, set
+     **Dockerfile Path** to just `Dockerfile` (no subfolder prefix —
+     it's already resolved relative to Root Directory). Putting the
+     subfolder in *both* fields, e.g. Root Directory
+     `/cloud/dashboard/backend` **and** Dockerfile Path
+     `/cloud/dashboard/backend/Dockerfile`, breaks the build: Railway
+     can't find `requirements.txt` because the build context no longer
+     matches where the Dockerfile's `COPY` instructions expect it
+     (`failed to compute cache key ... "/requirements.txt": not
+     found`). Rename the service to `dashboard-backend` to match
+     `railway.toml`.
    - Railway injects `$PORT` automatically; `uvicorn` in
      `backend/Dockerfile` must bind to it (already configured).
 
@@ -214,13 +234,17 @@ scratch:
    `DATABASE_URL` reference variable. On the `dashboard-backend`
    service's **Variables** tab, add `DATABASE_URL` and reference the
    Postgres plugin's value (Railway's variable picker offers this —
-   don't hand-copy the connection string). Run `db/schema.sql` against
-   that database once (e.g. `railway connect postgres` then `\i
-   db/schema.sql`, or `psql "$DATABASE_URL" -f db/schema.sql` with the
-   URL from the plugin's **Connect** tab). This Postgres is
-   **dedicated to the dashboard** — `cloud/broker` provisions and uses
-   its own, separate Postgres plugin; `DATABASE_URL` is never a shared
-   variable.
+   don't hand-copy the connection string). **Do this before the first
+   deploy, not after** — `backend/models.py` reads `DATABASE_URL` at
+   import time with no fallback, so a deploy without it crashes
+   immediately on startup with `KeyError: 'DATABASE_URL'` (visible in
+   `railway logs`), even though the build itself succeeded. Run
+   `db/schema.sql` against that database once (e.g. `railway connect
+   postgres` then `\i db/schema.sql`, or `psql "$DATABASE_URL" -f
+   db/schema.sql` with the URL from the plugin's **Connect** tab). This
+   Postgres is **dedicated to the dashboard** — `cloud/broker`
+   provisions and uses its own, separate Postgres plugin;
+   `DATABASE_URL` is never a shared variable.
 
 4. **Set the backend's variables — Shared Variables for anything
    broker-related, per-service for the rest.** Deploy `cloud/broker`

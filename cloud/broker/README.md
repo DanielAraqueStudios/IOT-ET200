@@ -42,13 +42,48 @@ wired in as the broker's `auth_callback` (see `main.py`). This is kept
 secures the transport, the device token authorizes the specific
 client. Do not remove or weaken this check.
 
+`User.deviceToken` stores a **bcrypt hash** of the token, never the
+plaintext value — `check_device_token` verifies with `passlib`, the
+same pattern as `passwordHash`. A DB read/backup leak does not hand
+out usable credentials directly. The issuance endpoint
+(`cloud/dashboard/backend`'s `POST /api/admin/devices`) hashes before
+writing; it never stores the plaintext token anywhere.
+
+On success, `check_device_token` returns an **identity** —
+`{"email", "can_command"}` — not just a bool. `broker.py` keeps this
+per-connection and enforces a topic ACL from it (see "Topic ACL"
+below).
+
 `models.py` here only declares the columns of `User` that
 `check_device_token` reads (`id`, `email`, `passwordHash`,
-`deviceToken`, `createdAt`).
+`deviceToken`, `canCommand`, `createdAt`).
 
 **Database: dedicated, not shared.** This service gets its own
 Postgres (a separate Railway Postgres plugin), not Paint-mixer's DB —
 it only ever needs this one trimmed table.
+
+## Topic ACL
+
+Every PUBLISH/SUBSCRIBE must target a topic starting with
+`MQTT_TOPIC_PREFIX` (default `plant/`, matching the only topics this
+repo's edge gateway uses) — anything outside that namespace is
+rejected (SUBSCRIBE gets a `0x80` failure code per-topic; PUBLISH is
+silently dropped after PUBACK, since MQTT 3.1.1 has no reject code for
+publishes).
+
+On top of that, a topic ending in `MQTT_COMMAND_SUFFIX` (default
+`/command` — i.e. anything that can write back to the PLC) additionally
+requires the connecting identity's `canCommand=true`. Most devices
+(e.g. the gateway, which only publishes telemetry and *subscribes* to
+the command topic) don't need this; only a client that legitimately
+needs to *send* commands should be issued a token with `can_command:
+true` at issuance time (see `cloud/dashboard/README.md`).
+
+This is still a flat ACL (one prefix, one permission flag) — it stops
+an arbitrary authenticated client from commanding the PLC or snooping
+unrelated topics, but it does not scope telemetry per-device. See
+`Arquitecture.md` for the accepted-risk discussion of what's still not
+covered (PLC-side interlock between remote and local control).
 
 ## Device token issuance
 
@@ -157,17 +192,30 @@ Step by step, from scratch:
 1. **Add the service.** In the project already created for
    `cloud/dashboard` (or create one first if deploying the broker
    alone), **New Service** → **GitHub Repo**, pick this repo. Set
-   **Root Directory** to `cloud/broker` and **Dockerfile Path** to
-   `Dockerfile` (Settings → Build). Name the service to match
-   `railway.toml`.
+   **Root Directory** to `cloud/broker` (Settings → Source) and
+   **Dockerfile Path** to `Dockerfile` (Settings → Build). **Don't put
+   the subfolder in both fields** — Root Directory `/cloud/broker` +
+   Dockerfile Path `Dockerfile` is correct; Root Directory
+   `/cloud/broker` + Dockerfile Path `/cloud/broker/Dockerfile` breaks
+   the build (`failed to compute cache key ...
+   "/requirements.txt": not found`, or the equivalent for this
+   service's own files) because the build context no longer lines up
+   with where the Dockerfile's `COPY` instructions expect it — this is
+   exactly what happened on the `cloud/dashboard/backend` deploy, see
+   its README. Name the service to match `railway.toml`.
 
 2. **Provision this service's own Postgres.** **New** → **Database**
    → **Add PostgreSQL**, *inside this project* but as its own plugin —
    do not reuse the dashboard's Postgres (see "Database: dedicated,
    not shared" above). On this service's **Variables** tab, add
    `DATABASE_URL` referencing that plugin via Railway's variable
-   picker. No manual migration step is needed — the Dockerfile's `CMD`
-   runs `npx prisma migrate deploy` on every deploy.
+   picker. **Do this before the first deploy** — `broker.py`/`main.py`
+   read `DATABASE_URL` at startup with no fallback, same as
+   `cloud/dashboard/backend`'s `models.py`, so deploying without it set
+   crashes immediately (`KeyError: 'DATABASE_URL'` in `railway logs`)
+   even if the build itself succeeded. No manual migration step is
+   needed beyond that — the Dockerfile's `CMD` runs `npx prisma migrate
+   deploy` on every deploy.
 
 3. **Set `MQTT_PORT`** (per-service, e.g. `1883`) and generate the
    broker's self-signed TLS cert/key pair, setting `MQTT_TLS_CERT` /
@@ -255,6 +303,10 @@ Required env vars (see `env.example`):
   `mqtts://`. Once deployed, fetch this cert (or its fingerprint) so
   it can be pinned on the client side (`MQTT_TLS_CA_CERT` for the
   dashboard backend) — do not fabricate or assume a value.
+- `MQTT_TOPIC_PREFIX` / `MQTT_COMMAND_SUFFIX` — optional, default
+  `plant/` / `/command`. See "Topic ACL" above; only change these if
+  this broker ever serves topics outside `edge/small_scope`'s
+  `plant/...` namespace.
 
 ### Env vars at a glance
 
