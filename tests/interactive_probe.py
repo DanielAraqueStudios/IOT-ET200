@@ -30,8 +30,11 @@ scripts/.local-stack/local.env-derived setup works for both):
     MQTT_HOST              default: localhost
     MQTT_PORT              default: 18830
     MQTT_TLS_CA_CERT       path to the broker's cert (required)
-    MQTT_USERNAME          device-token username
-    MQTT_DEVICE_TOKEN      the matching device token (password)
+    MQTT_USERNAME          device-token username — prompted for at the
+                            terminal if unset, since a wrong silent
+                            default just fails auth confusingly
+    MQTT_DEVICE_TOKEN      the matching device token (password) — same,
+                            prompted for (hidden input) if unset
     MQTT_OUTPUT_TOPIC      default: plant/small_scope/output/state (what the PLC publishes)
     MQTT_INPUT_TOPIC       default: plant/small_scope/input/state  (what the dashboard/gateway publishes back)
 
@@ -40,6 +43,7 @@ At the prompt, type either:
     <topic> <value>         publish <value> to an explicit topic
     quit / exit / Ctrl+C    disconnect and exit
 """
+import getpass
 import os
 import ssl
 import sys
@@ -51,13 +55,21 @@ import paho.mqtt.client as mqtt
 HOST = os.environ.get("MQTT_HOST", "localhost")
 PORT = int(os.environ.get("MQTT_PORT", "18830"))
 CERT = os.environ.get("MQTT_TLS_CA_CERT")
-USERNAME = os.environ.get("MQTT_USERNAME", "test@example.com")
-PASSWORD = os.environ.get("MQTT_DEVICE_TOKEN", "testtoken123")
+# Credentials are prompted for interactively rather than silently
+# defaulted — a wrong guessed default (or a stale one left over from a
+# previous probe) just fails CONNACK with a confusing "bad username or
+# password" instead of making it obvious credentials were never set.
+USERNAME = os.environ.get("MQTT_USERNAME") or input("MQTT username (device email): ").strip()
+PASSWORD = os.environ.get("MQTT_DEVICE_TOKEN") or getpass.getpass("MQTT device token (hidden): ").strip()
 OUTPUT_TOPIC = os.environ.get("MQTT_OUTPUT_TOPIC", "plant/small_scope/output/state")
 INPUT_TOPIC = os.environ.get("MQTT_INPUT_TOPIC", "plant/small_scope/input/state")
 
 if not CERT:
     print("FAIL: MQTT_TLS_CA_CERT must point at the broker's TLS cert (see README.md)")
+    sys.exit(1)
+
+if not USERNAME or not PASSWORD:
+    print("FAIL: both a username and a device token are required")
     sys.exit(1)
 
 _print_lock = threading.Lock()
