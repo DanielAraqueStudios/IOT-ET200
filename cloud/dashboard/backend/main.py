@@ -1,10 +1,11 @@
+import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -68,7 +69,9 @@ def health():
 
 @app.get("/api/state")
 def current_state(user: str = Depends(require_auth)):
-    """Latest value per tag_name — read-only, no write endpoints by design."""
+    """Latest value per tag_name. (This endpoint itself is read-only —
+    see POST /api/command below for the write path into the PLC's
+    output.)"""
     with Session(engine) as s:
         subq = (
             s.query(PlcState.tag_name, func.max(PlcState.id).label("max_id"))
@@ -154,3 +157,59 @@ def create_device(body: CreateDeviceRequest, user: str = Depends(require_auth)):
             ))
         s.commit()
     return CreateDeviceResponse(email=body.email, device_token=token, can_command=body.can_command)
+
+
+# ── Remote command (write path into the PLC's output) ───────────────────────
+# Publishes ON/OFF onto the gateway's command topic (edge/small_scope's
+# config.js: mqtt.commandTopic, default below matches that default). The
+# gateway already subscribes to this topic and writes the value to the PLC
+# over OPC UA — nothing on the edge/gateway side needed to change for this.
+#
+# Requires this backend's OWN MQTT identity (MQTT_USERNAME/MQTT_DEVICE_TOKEN)
+# to have been issued a token with can_command=True via POST
+# /api/admin/devices (see broker.py's _publish_allowed) — otherwise the
+# broker will reject the publish. See cloud/dashboard/README.md for the
+# exact re-issuance step.
+
+MQTT_COMMAND_TOPIC = os.environ.get("MQTT_COMMAND_TOPIC", "plant/small_scope/output/command")
+
+
+class CommandRequest(BaseModel):
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def validate_value(cls, v: str) -> str:
+        if v not in ("ON", "OFF"):
+            raise ValueError('value must be "ON" or "OFF"')
+        return v
+
+
+class CommandResponse(BaseModel):
+    published: bool
+    topic: str
+    value: str
+
+
+@app.post("/api/command", response_model=CommandResponse)
+def send_command(body: CommandRequest, user: str = Depends(require_auth)):
+    """Admin-JWT-protected write into the PLC's output, via the gateway's
+    existing MQTT command topic. Fails loudly (503) if this backend's own
+    MQTT client isn't currently connected, rather than silently dropping
+    the command — a broker-side ACL rejection (can_command=False on this
+    backend's identity) can't be detected synchronously by paho, so that
+    failure mode shows up as the PLC never actually changing state, not as
+    an error from this endpoint; see the README for how to confirm/fix it."""
+    if not mqtt_ingest.is_connected():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MQTT client is not connected to the broker — command not sent",
+        )
+    try:
+        mqtt_ingest.publish(MQTT_COMMAND_TOPIC, body.value)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to publish command: {exc}",
+        )
+    return CommandResponse(published=True, topic=MQTT_COMMAND_TOPIC, value=body.value)
