@@ -219,9 +219,22 @@ class MqttBroker:
 
     # ── Start TCP server ───────────────────────────────────────────────────────
 
-    async def start(self, host: str = "0.0.0.0", port: int = 1883):
+    async def start(self, host: str = "0.0.0.0", port: int = 1883, retries: int = 10, retry_delay: float = 2.0):
         ssl_context = build_ssl_context()
-        server = await asyncio.start_server(self._handle, host, port, ssl=ssl_context)
+        # On a platform like Railway, a just-replaced container's old process
+        # can take a moment to fully release the port — binding right at
+        # startup can race it. Retry instead of letting a transient EADDRINUSE
+        # crash the whole app (which would also take down the HTTP health
+        # check running in the same process).
+        for attempt in range(1, retries + 1):
+            try:
+                server = await asyncio.start_server(self._handle, host, port, ssl=ssl_context)
+                break
+            except OSError:
+                if attempt == retries:
+                    raise
+                print(f"[MQTT] port {port} still in use (attempt {attempt}/{retries}), retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
         addr   = server.sockets[0].getsockname()
         scheme = "mqtts" if ssl_context else "mqtt"
         print(f"[MQTT] broker listening on {scheme}://{addr[0]}:{addr[1]}")
