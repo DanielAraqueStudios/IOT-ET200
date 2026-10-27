@@ -22,6 +22,11 @@ model User {
   // Topic ACL: only true for identities allowed to PUBLISH to a
   // "/command" topic (see cloud/broker/broker.py).
   canCommand   Boolean  @default(false)
+  // Remote kill-switch: when false, check_device_token() rejects this
+  // device's MQTT credentials outright, without re-issuing/rotating the
+  // token. Lets an admin instantly cut off a compromised or retired
+  // device (see cloud/dashboard/backend's PATCH /api/admin/devices/{email}).
+  enabled      Boolean  @default(true)
   createdAt    DateTime @default(now())
 
   @@map("User")

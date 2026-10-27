@@ -108,9 +108,13 @@ at least once — `check_device_token` rejects everything until then.
 The issued token is what goes into `edge/small_scope/config.js`'s
 `mqtt.deviceToken` for the gateway to authenticate.
 
-Not built (flagged, not solved here, since it wasn't asked for):
-revoking or rotating an already-issued token, or listing/auditing
-which devices currently hold one.
+A `User.enabled` column (default `true`) acts as a remote kill-switch:
+`check_device_token` rejects a disabled device's credentials exactly
+like a wrong token (same failure shape, no separate error path), so
+an admin can instantly cut off a compromised or retired device
+without rotating its token. Listing issued devices and toggling
+`enabled` is done from `cloud/dashboard/backend` (`GET`/`PATCH
+/api/admin/devices[/{email}]`) — see its README for the full flow.
 
 ## Database migrations
 

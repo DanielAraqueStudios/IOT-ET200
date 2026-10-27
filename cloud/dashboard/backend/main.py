@@ -143,6 +143,9 @@ def create_device(body: CreateDeviceRequest, user: str = Depends(require_auth)):
         if existing:
             existing.deviceToken = token_hash
             existing.canCommand = body.can_command
+            # Re-issuing a token also clears any prior disable — the
+            # admin explicitly asked for a working credential.
+            existing.enabled = True
         else:
             # passwordHash is unused by the broker's device-token auth
             # (check_device_token only compares deviceToken) but the
@@ -213,3 +216,56 @@ def send_command(body: CommandRequest, user: str = Depends(require_auth)):
             detail=f"Failed to publish command: {exc}",
         )
     return CommandResponse(published=True, topic=MQTT_COMMAND_TOPIC, value=body.value)
+
+
+# ── Device listing / remote enable-disable ───────────────────────────────────
+
+class DeviceInfo(BaseModel):
+    email: str
+    can_command: bool
+    enabled: bool
+    created_at: str
+
+
+@app.get("/api/admin/devices", response_model=list[DeviceInfo])
+def list_devices(user: str = Depends(require_auth)):
+    """Lists issued devices for the admin UI. Never returns deviceToken
+    (or its hash) — that's a write-once secret by design (see
+    create_device's docstring); this endpoint must not leak it even
+    as a hash."""
+    with Session(broker_engine) as s:
+        rows = s.query(BrokerUser).order_by(BrokerUser.createdAt.desc()).all()
+        return [
+            DeviceInfo(
+                email=r.email,
+                can_command=bool(r.canCommand),
+                enabled=bool(r.enabled),
+                created_at=r.createdAt.isoformat() if r.createdAt else "",
+            )
+            for r in rows
+        ]
+
+
+class SetEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@app.patch("/api/admin/devices/{email}", response_model=DeviceInfo)
+def set_device_enabled(email: str, body: SetEnabledRequest, user: str = Depends(require_auth)):
+    """Remote kill-switch: flips `enabled` for an already-issued device
+    without touching its token. Does NOT accept or require a new
+    token — re-enabling makes the existing (previously issued) token
+    work again, which is the whole point versus re-issuing. 404s if
+    the email has no device entry, rather than silently no-op'ing."""
+    with Session(broker_engine) as s:
+        existing = s.query(BrokerUser).filter_by(email=email).first()
+        if not existing:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No device with that email")
+        existing.enabled = body.enabled
+        s.commit()
+        return DeviceInfo(
+            email=existing.email,
+            can_command=bool(existing.canCommand),
+            enabled=bool(existing.enabled),
+            created_at=existing.createdAt.isoformat() if existing.createdAt else "",
+        )

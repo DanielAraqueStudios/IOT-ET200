@@ -33,4 +33,8 @@ class BrokerUser(BrokerBase):
     # hashes before storing and returns the plaintext token only once.
     deviceToken  = Column(String,  nullable=True)
     canCommand   = Column(Boolean, nullable=False, default=False)
+    # Remote kill-switch — see main.py's PATCH /api/admin/devices/{email}.
+    # When False, the broker's check_device_token() rejects this
+    # device's credentials without needing the token rotated.
+    enabled      = Column(Boolean, nullable=False, default=True)
     createdAt    = Column(DateTime, default=func.now())

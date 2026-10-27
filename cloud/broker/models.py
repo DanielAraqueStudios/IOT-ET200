@@ -29,4 +29,8 @@ class User(Base):
     # Topic-ACL flag: only identities with canCommand=True may PUBLISH to
     # topics ending in "/command" (see broker.py's SUBSCRIBE/PUBLISH ACL).
     canCommand   = Column(Boolean, nullable=False, default=False)
+    # Remote kill-switch: when False, check_device_token() rejects this
+    # device's credentials outright (same failure shape as a bad token),
+    # without needing to rotate/re-issue the token.
+    enabled      = Column(Boolean, nullable=False, default=True)
     createdAt    = Column(DateTime, default=func.now())
