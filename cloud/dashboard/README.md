@@ -203,6 +203,42 @@ curl -X POST https://<backend-domain>/api/admin/devices \
 Add `MQTT_COMMAND_TOPIC` to the "Env vars needed" list below if it
 ever needs to differ from the gateway's default.
 
+**Disabling this backend's own device identity (`PATCH
+/api/admin/devices/{email}` on the `MQTT_USERNAME` email, see
+"Device enable/disable" in `cloud/broker/README.md`) takes effect on
+`/api/command` immediately, not on next MQTT reconnect.** That's not
+automatic from MQTT alone: `cloud/broker/broker.py`'s `_handle` only
+calls `check_device_token()` (which checks `enabled`) once, at MQTT
+CONNECT time, and then caches the resulting identity — including
+`can_command` — on that TCP connection for as long as it stays open.
+Disabling the row does **not** close or otherwise touch an
+already-established connection; the broker has no code path that
+re-validates a live connection's identity. So if the admin disables
+this backend's own device entry while `mqtt_ingest`'s client is
+already connected (the common case — it connects once at startup and
+stays connected), nothing happens at the MQTT layer: no disconnect, no
+error, and (absent the check below) commands would keep publishing
+successfully until something *unrelated* forces a reconnect (a network
+blip, a broker restart, a redeploy) — at which point the backend's next
+CONNECT re-runs `check_device_token()`, now fails, and the backend
+is locked out from then on, with `mqtt_ingest.is_connected()` finally
+flipping to `false` and `/api/command` returning its existing 503.
+
+Because that gap could leave a disabled identity able to issue commands
+indefinitely, `/api/command` does **not** rely on MQTT connection state
+alone for this. On every call it re-queries this backend's own
+`BrokerUser` row (keyed by `MQTT_USERNAME`) directly against
+`broker_engine` and returns `503` if `enabled` is false or `canCommand`
+is false — independent of whether `mqtt_ingest.is_connected()` still
+reports `true`. This makes a disable of the backend's own identity
+take effect immediately for command-publishing specifically, even
+though the underlying MQTT connection and its broker-side ACL caching
+stay exactly as described above. (The pre-existing "broker ACL
+rejection isn't synchronously visible to paho" caveat above is about
+a *different* case — `can_command=False` set at the time the
+connection was established — and still applies to any other
+publish path that doesn't do this same re-check.)
+
 ### Frontend
 
 ```bash
