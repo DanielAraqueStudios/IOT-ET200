@@ -25,11 +25,19 @@ Usage:
     python tests/interactive_probe.py
 
 Configuration (env vars, same names as test_smoke.py so one
-scripts/.local-stack/local.env-derived setup works for both):
+scripts/.local-stack/local.env-derived setup works for both). Defaults
+point at the deployed Railway broker, so running against it needs zero
+env vars — only override these to point at something else (e.g. a
+local Docker broker):
 
-    MQTT_HOST              default: localhost
-    MQTT_PORT              default: 18830
-    MQTT_TLS_CA_CERT       path to the broker's cert (required)
+    MQTT_HOST              default: viaduct.proxy.rlwy.net (the deployed
+                            broker's TCP Proxy host)
+    MQTT_PORT              default: 52805 (that TCP Proxy's port)
+    MQTT_TLS_CA_CERT       path to the broker's cert. Defaults to
+                            scripts/.broker-cert-final/broker.crt if that
+                            file exists (what
+                            scripts/generate_broker_cert.py writes by
+                            default); required if it doesn't.
     MQTT_USERNAME          device-token username — prompted for at the
                             terminal if unset, since a wrong silent
                             default just fails auth confusingly
@@ -45,6 +53,7 @@ At the prompt, type either:
 """
 import getpass
 import os
+import pathlib
 import ssl
 import sys
 import threading
@@ -52,9 +61,17 @@ import time
 
 import paho.mqtt.client as mqtt
 
-HOST = os.environ.get("MQTT_HOST", "localhost")
-PORT = int(os.environ.get("MQTT_PORT", "18830"))
-CERT = os.environ.get("MQTT_TLS_CA_CERT")
+# Defaults point at the deployed Railway broker (its TCP Proxy host:port)
+# and the cert scripts/generate_broker_cert.py writes by default, so this
+# script runs with zero env vars set in the common case — override any of
+# them (e.g. to point at a local Docker broker instead) via env vars as
+# before.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_DEFAULT_CERT = _REPO_ROOT / "scripts" / ".broker-cert-final" / "broker.crt"
+
+HOST = os.environ.get("MQTT_HOST", "viaduct.proxy.rlwy.net")
+PORT = int(os.environ.get("MQTT_PORT", "52805"))
+CERT = os.environ.get("MQTT_TLS_CA_CERT") or (str(_DEFAULT_CERT) if _DEFAULT_CERT.exists() else None)
 # Credentials are prompted for interactively rather than silently
 # defaulted — a wrong guessed default (or a stale one left over from a
 # previous probe) just fails CONNACK with a confusing "bad username or
