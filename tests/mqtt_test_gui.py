@@ -131,14 +131,15 @@ class MqttBridge(QObject):
             self.client.tls_insecure_set(True)
 
         def on_connect(c, userdata, flags, reason_code, properties=None):
-            rc = int(reason_code)
+            rc = getattr(reason_code, "value", reason_code)
             self.connected.emit(rc)
             if rc == 0:
                 for t in topics:
                     c.subscribe(t)
 
         def on_disconnect(c, userdata, flags, reason_code, properties=None):
-            self.disconnected.emit(int(reason_code))
+            rc = getattr(reason_code, "value", reason_code)
+            self.disconnected.emit(rc)
 
         def on_message(c, userdata, msg):
             self.message.emit(msg.topic, msg.payload.decode(errors="replace"))
