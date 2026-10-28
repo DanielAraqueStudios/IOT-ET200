@@ -23,7 +23,10 @@ type CommandStatus = "idle" | "pending" | "done" | "error";
     <app-system-status></app-system-status>
     <app-login *ngIf="!loggedIn" (loggedIn)="onLoggedIn()"></app-login>
     <ng-container *ngIf="loggedIn">
-      <h1>PLC remote control</h1>
+      <div class="header-row">
+        <h1>PLC remote control</h1>
+        <button class="logout-btn" (click)="logout()">Log out</button>
+      </div>
       <div class="body">
         <section class="catalog">
           <h2 class="section-title">Tag state</h2>
@@ -64,7 +67,16 @@ type CommandStatus = "idle" | "pending" | "done" | "error";
     </ng-container>
   `,
   styles: [`
-    h1 { font-size: 20px; color: #f4f4f5; margin: 0 0 16px; }
+    h1 { font-size: 20px; color: #f4f4f5; margin: 0; }
+    .header-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .logout-btn {
+      padding: 6px 14px; border-radius: 8px; border: 1px solid #27272a;
+      background: transparent; color: #71717a; font-size: 12px; cursor: pointer;
+    }
+    .logout-btn:hover { border-color: #52525b; color: #a1a1aa; }
     .body { display: flex; gap: 0; border: 1px solid #27272a; border-radius: 12px; overflow: hidden; }
     .catalog { flex: 1; padding: 24px; }
     .section-title { font-size: 14px; color: #71717a; margin: 0 0 16px; }
@@ -145,6 +157,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   onLoggedIn() {
     this.loggedIn = true;
     this.startPolling();
+  }
+
+  logout() {
+    this.auth.logout();
+    this.loggedIn = false;
+    if (this.timer) clearInterval(this.timer);
   }
 
   isOn(value: string): boolean {
