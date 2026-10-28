@@ -116,6 +116,21 @@ without rotating its token. Listing issued devices and toggling
 `enabled` is done from `cloud/dashboard/backend` (`GET`/`PATCH
 /api/admin/devices[/{email}]`) — see its README for the full flow.
 
+"Instantly" here means the *next* MQTT CONNECT: `check_device_token` is
+only ever called from `broker.py`'s `_handle` at CONNECT time, and its
+result (including `can_command`) is then cached on that TCP connection
+for as long as it stays open — there is no code path that re-validates
+an already-connected client against a later DB change. So disabling a
+device that is *currently connected* has no effect until that
+connection happens to drop and reconnect (its own disconnect, a broker
+restart, etc.) — it is not dropped by the disable itself. This matters
+most for `cloud/dashboard/backend`'s own MQTT identity (used by
+`POST /api/command`, see that service's README's "Remote command"
+section), since that client connects once at startup and normally
+stays connected indefinitely; that README documents how `/api/command`
+closes this specific gap with an active per-call enabled/canCommand
+re-check instead of relying on MQTT connection state.
+
 ## Database migrations
 
 Schema/migrations for this dedicated Postgres are managed with

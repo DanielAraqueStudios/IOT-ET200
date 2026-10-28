@@ -202,7 +202,33 @@ def send_command(body: CommandRequest, user: str = Depends(require_auth)):
     the command — a broker-side ACL rejection (can_command=False on this
     backend's identity) can't be detected synchronously by paho, so that
     failure mode shows up as the PLC never actually changing state, not as
-    an error from this endpoint; see the README for how to confirm/fix it."""
+    an error from this endpoint; see the README for how to confirm/fix it.
+
+    Also re-checks `enabled`/`canCommand` on THIS backend's own device row
+    (BrokerUser, keyed by MQTT_USERNAME) on every call, straight against
+    broker_engine — not cached from mqtt_ingest's connection. The broker
+    only runs check_device_token() at MQTT CONNECT time and caches the
+    resulting identity (including can_command) on the live TCP connection
+    for as long as that connection stays up; disabling this backend's
+    device entry via PATCH /api/admin/devices/{email} does NOT itself
+    close or affect an already-open connection, so without this check a
+    disable would have zero effect on command-publishing until something
+    unrelated (network blip, broker restart, deploy) happens to force a
+    reconnect. This query makes a disable take effect immediately for
+    /api/command regardless of MQTT-level connection state. See the
+    README's "Remote command" section for the full reconnect-timing
+    writeup."""
+    with Session(broker_engine) as s:
+        own = s.query(BrokerUser).filter_by(email=mqtt_ingest.MQTT_USERNAME).first()
+        if own is None or not own.enabled or not own.canCommand:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "This backend's own MQTT device identity is disabled or "
+                    "lacks command permission — command not sent (even if "
+                    "the existing MQTT connection still looks connected)"
+                ),
+            )
     if not mqtt_ingest.is_connected():
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
