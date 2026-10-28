@@ -32,14 +32,27 @@ for the TIA Portal V18 steps required on the PLC side.
 
 ### `cloud/dashboard/`
 
-Read-only operations dashboard: a FastAPI backend ingests MQTT
-telemetry into Postgres and exposes a small REST API (JWT-protected),
-and an Angular frontend displays current and historical PLC
-input/output state. No control or write-back capability — display
-only. Deploys to Railway.
+Operations dashboard: a FastAPI backend ingests MQTT telemetry into
+Postgres and exposes a small REST API (JWT-protected), and an Angular
+frontend displays current and historical PLC input/output state as
+well as a live system-status widget. A logged-in admin can also:
 
-See [`cloud/dashboard/README.md`](./cloud/dashboard/README.md) for
-local setup, environment variables, and Railway deployment steps.
+- **Send a remote ON/OFF command** to the PLC's output — `POST
+  /api/command` publishes onto the gateway's existing MQTT command
+  topic (`edge/small_scope` already subscribes to it and writes to the
+  PLC over OPC UA; no gateway-side change was needed). No PLC-side
+  interlock — see "Security posture" below.
+- **Issue, list, and remotely enable/disable MQTT device tokens** — a
+  disabled device's credentials stop authenticating to the broker
+  without needing a new token issued; see
+  `cloud/broker/README.md`/`cloud/dashboard/README.md`'s device
+  sections for exactly when a disable takes effect (immediately for
+  this dashboard's own command path; on next CONNECT for any other
+  client, since the broker only checks at CONNECT time).
+
+Deploys to Railway. See
+[`cloud/dashboard/README.md`](./cloud/dashboard/README.md) for local
+setup, environment variables, and Railway deployment steps.
 
 ## Data flow
 
@@ -48,13 +61,17 @@ PLC (S7-1500, OPC UA server)
    |  OPC UA, plant-local network only
    v
 edge/small_scope  (IOT2050 gateway)
-   |  MQTT over TLS + device-token auth
-   v
+   ^  |  MQTT over TLS + device-token auth
+   |  v
 MQTT broker  (Railway)
-   |
-   v
+   ^  |
+   |  v
 cloud/dashboard  (Railway: FastAPI + Postgres + Angular)
 ```
+
+Telemetry flows down (PLC → dashboard); a remote ON/OFF command flows
+back up (dashboard → broker → gateway → PLC) via the same broker, on a
+separate topic (`.../output/command` vs. `.../output/state`).
 
 ## Deploying to Railway
 
@@ -178,10 +195,52 @@ to reconstruct it from two files:
   TLS does not replace the token check).
 - The dashboard's REST API is protected separately by JWT, independent
   of the MQTT broker's own auth.
+- A device's MQTT access can be remotely disabled (kill-switch) without
+  rotating its token — see `cloud/broker/README.md`'s device
+  enable/disable section. This only takes effect on that device's
+  *next* MQTT CONNECT (the broker caches the identity for the life of
+  an already-open connection); `POST /api/command` specifically
+  re-checks the dashboard backend's own permission on every call, so
+  disabling *that* identity is the one case that takes effect
+  immediately.
 - No remote command path has a PLC-side interlock against local
-  control in this minimal scope — see `Arquitecture.md` and
-  `edge/small_scope/README.md` for the accepted-risk rationale before
-  extending this beyond a lab/POC deployment.
+  control in this minimal scope — a command sent from the dashboard
+  can be overridden by the physical control panel, and vice versa.
+  See `Arquitecture.md` and `edge/small_scope/README.md` for the
+  accepted-risk rationale before extending this beyond a lab/POC
+  deployment.
+- Admin login is a single hardcoded username/password (env vars), no
+  2FA yet — see "Future implementation" below.
+
+## Testing
+
+Three tools for exercising the deployed cloud stack by hand, without
+needing the real PLC/gateway running — see each file's own docstring
+for full details:
+
+- **`tests/interactive_probe.py`** (`tests/interactive_probe.ps1` on
+  Windows) — a terminal MQTT client. Connects to the deployed broker,
+  subscribes to both state topics, and lets you type a value to
+  publish. Prompts for a device email/token; connection host/port/cert
+  default to the deployed broker. Good for a quick one-off check.
+- **`tests/mqtt_test_gui.py`** (`tests/mqtt_test_gui.ps1`) — the same
+  idea with a PyQt6 desktop UI: a connection panel, a live color-coded
+  event log, ON/OFF quick-publish, and a "simulated gateway" toggle
+  that auto-echoes any command it receives back to the state topic —
+  stands in for the real `edge/small_scope` gateway so you can test the
+  dashboard's remote-control button end-to-end before that gateway is
+  deployed. `pip install -r tests/requirements.txt` first.
+- **`edge/small_scope/test_mqtt.js`** — connects using the gateway's
+  own `config.js` and the exact `mqtt` library it ships with, skipping
+  OPC UA entirely. Run this *on the IOT2050 itself* to confirm it can
+  reach the broker before wiring up the PLC — `index.js`'s real
+  `main()` connects to OPC UA first and won't attempt MQTT at all if
+  the PLC isn't reachable yet.
+- **`tests/test_smoke.py`** (via `scripts/run_smoke_test_local.py`) —
+  automated pass/fail check against the **local Docker stack**
+  (`scripts/run_local_stack.py`), not the deployed cloud broker. Start
+  the local stack first (`python scripts/run_local_stack.py up
+  --seed-token`) or this will fail immediately with a clear error.
 
 ## Future implementation
 
