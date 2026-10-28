@@ -28,7 +28,12 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    # PATCH is used by PATCH /api/admin/devices/{email} (device
+    # enable/disable) — omitting it here doesn't fail server-side, but
+    # the browser's CORS preflight silently blocks the request before
+    # it's ever sent, surfacing only as a generic "Failed to fetch" in
+    # the frontend with nothing useful in the network tab.
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
